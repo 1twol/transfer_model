@@ -48,12 +48,15 @@ def _make_pace_header(cascades: int, facla: int = 10) -> str:
 
 
 def _build_spin_distribution(e_cm: float, total_sigma_mb: float,
-                                l_max: int = 0) -> Tuple[np.ndarray, int]:
-    """构建分波截面数组 (sharp-cutoff 近似)
+                                l_max: int = 0,
+                                model=None) -> Tuple[np.ndarray, int]:
+    """构建分波截面数组 — 从模型 P(b) 分布采样
 
-    对于给定质心能量，使用擦边角动量 L_g 作为截断:
-      σ_L = σ_total / (L_g + 1)   for L ≤ L_g
-      σ_L = 0                      for L > L_g
+    将碰撞参数映射为角动量 L ≈ k·b, 用模型的 P(b) 形状
+    填充 σ_L 数组, 然后归一化到 total_sigma_mb。
+
+    这样 .pace 文件里的 σ_L 分布反映了真实的擦边截断形状,
+    而非人为的平坦 sharp-cutoff。
 
     返回 (sigma_L 数组, 实际 l_max)
     """
@@ -66,8 +69,32 @@ def _build_spin_distribution(e_cm: float, total_sigma_mb: float,
 
     n_l = l_max + 1
     sigmas = np.zeros(n_l)
-    n_active = l_g + 1 if l_g < n_l else n_l
-    sigmas[:n_active] = total_sigma_mb / n_active
+
+    # 用模型计算各 L 分波的 P(b) 形状
+    k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+    if model is not None and k > 0:
+        for L in range(min(l_g + 1, n_l)):
+            b = L / k if k > 0 else 0
+            try:
+                # 只取 P(b) 形状, 不用费米抽样
+                p = model.probability(e_cm, b, n_fermi_samples=0)
+            except TypeError:
+                p = model.probability(e_cm, b)
+            sigmas[L] = abs(p)
+    else:
+        # 无模型回退: Fermi 函数形状
+        for L in range(min(l_g + 1, n_l)):
+            b = L / k if k > 0 else 0
+            sigmas[L] = 1.0 / (1.0 + np.exp((b - l_g/k) / 0.5))
+
+    # 归一化到总截面
+    s_sum = np.sum(sigmas)
+    if s_sum > 1e-30:
+        sigmas = sigmas / s_sum * (total_sigma_mb / (2 * l_g + 1))
+        # 再 scale 使得 sum((2L+1)*σ_L) = total_sigma_mb
+        weight_sum = np.sum([(2*L+1)*sigmas[L] for L in range(n_l)])
+        if weight_sum > 1e-30:
+            sigmas *= (total_sigma_mb / weight_sum)
 
     return sigmas, l_max
 
@@ -91,6 +118,7 @@ def write_single_pace(outfile: str,
                        cascades: int = 10000,
                        facla: int = 10,
                        l_max: int = 0,
+                       model=None,
                        label: str = "") -> None:
     """写单个 .pace 文件 (PACE4 正确格式)
 
@@ -111,7 +139,7 @@ def write_single_pace(outfile: str,
     if a_cn is None:
         a_cn = _sys.product.A
 
-    sigma_l, l_max_actual = _build_spin_distribution(e_cm, total_sigma_mb, l_max)
+    sigma_l, l_max_actual = _build_spin_distribution(e_cm, total_sigma_mb, l_max, model=model)
     ajnuc = _get_ajnuc(z_cn, a_cn, l_max_actual)
     n_l = len(sigma_l)
     sigma_str = " ".join(f"{s:.6e}" for s in sigma_l)
@@ -144,7 +172,8 @@ def generate_pace4_from_spectrum(e_star_spec: Dict,
                                    label: str = "Li7+Th232",
                                    cascades: int = 10000,
                                    facla: int = 10,
-                                   n_e_star_bins: int = 10) -> Dict:
+                                   n_e_star_bins: int = 10,
+                                   model=None) -> Dict:
     """从激发能谱生成多份 .pace 文件 (每个 E* bin 一份)
 
     与 generate_pace.py 的区别:
@@ -204,6 +233,7 @@ def generate_pace4_from_spectrum(e_star_spec: Dict,
         fpath = os.path.join(output_dir, fname)
         write_single_pace(fpath, e_cm, float(e), sigma_mb,
                            z_cn, a_cn, cascades, facla, l_max=0,
+                           model=model,
                            label=f"{label} E* bin {i+1}/{len(e_selected)}")
         files.append({
             'path': fpath,

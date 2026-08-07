@@ -140,7 +140,7 @@ def generate_pace4_for_energies(model, e_lab_list, exc_result,
         meta = generate_pace4_from_spectrum(
             spec, e_cm=e_cm, output_dir=pace_dir,
             label=f"{label_prefix} E={e_lab:.0f}MeV",
-            cascades=cascades, facla=facla
+            cascades=cascades, facla=facla, model=model
         )
 
         if verbose:
@@ -309,7 +309,7 @@ def main():
             meta = generate_pace4_from_spectrum(
                 spec_e, e_cm=e_cm, output_dir=pace_dir,
                 label=f"Li7+Th232 {args.model} E={e_lab:.0f}MeV",
-                cascades=args.cascades, facla=args.facla
+                cascades=args.cascades, facla=args.facla, model=model
             )
             print(f"    E* = {spec_e['e_star_mean']:.1f} MeV, "
                   f"σ = {meta['total_sigma_mb']:.4e} mb, "
@@ -325,7 +325,7 @@ def main():
             meta = generate_pace4_from_spectrum(
                 spec, e_cm=e_cm_mid, output_dir=pace_dir,
                 label=f"Li7+Th232 {args.model} E={e_mid:.0f}MeV",
-                cascades=args.cascades, facla=args.facla
+                cascades=args.cascades, facla=args.facla, model=model
             )
             print(f"    {len(meta['files'])} files → {pace_dir}")
             print(f"    [spin dist: sharp-cutoff L_g, not CCFULL partial waves]")
