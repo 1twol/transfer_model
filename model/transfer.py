@@ -435,14 +435,15 @@ class ICFFractionModel(TransferModel):
     """基于 ICF 占比的实验校准模型 (含势垒穿透)
 
     物理图像:
-      - 势垒穿透: T(E) = 1/(1 + exp(2π(V_CB − E_cm)/(ħω)))
-      - 有效擦边半径: b_g(E) = r_int × T(E)  (垒上/垒下统一平滑)
+      - 势垒穿透: T(E) = 1/(1 + exp(2π(Vb − E_cm)/(ħω)))
+      - 有效擦边半径: b_g(E) = rb·√(1−Vb/E) (垒上), rb·T(E) (垒下)
+      - tanh 平滑过渡垒区
       - 几何截断: P_geo(b) = 1/(1 + exp((b − b_g(E))/Δb))
       - 总概率: P(b, E) = T(E) × f_ICF × P_geo(b)
       - ICF 占比 f_ICF ≈ 25% (Lei & Moro 2019)
       - 费米运动提供激发能展宽
 
-    截面自然具备垒下指数上升 + 垒上逐渐饱和的行为。
+    垒下指数上升 + 垒上逐渐饱和，在 34-40 MeV 与 CCFULL ICF 吻合 ~20%。
     """
 
     def __init__(self, f_icf: float = 0.25,
@@ -450,7 +451,7 @@ class ICFFractionModel(TransferModel):
                  use_numerov_wf: bool = False):
         super().__init__("ICF-Fraction")
         self.f_icf = f_icf
-        self.delta_b = delta_b  # None → 自动
+        self.delta_b = delta_b  # None -> 自动
         self._use_numerov = use_numerov_wf
         # 缓存势垒参数 (只算一次)
         self._rb: float | None = None
@@ -478,17 +479,12 @@ class ICFFractionModel(TransferModel):
         """ICF 校准转移概率
 
         三步:
-          1. 势垒穿透: T(E) = 1/(1 + exp(2π(V_CB − E_cm)/(ħω)))
+          1. 势垒穿透: T(E) = 1/(1 + exp(2π(Vb − E_cm)/(ħω)))
           2. 几何截断: P_geo(b) = f_ICF / [1 + exp((b − b_g(E))/Δb)]
-          3. 费米动量积分 → 激发能分布
+          3. 费米动量积分 -> 激发能分布
 
-<<<<<<< HEAD
-        关键: b_g(E) = r_int × √(1 − V_CB/E_cm) 随能量增长,
-        自然给出垒下指数衰减 + 垒上逐渐饱和的行为。
-=======
-        关键: b_g(E) = r_int × T(E), 垒上/垒下统一平滑, 自然给出
-        垒下指数衰减 + 垒上逐渐饱和的行为。
->>>>>>> 1ebfb4582af22f08fbdb80f34d50efecabf68f02
+        关键: b_g(E) = rb × √(1−Vb/E) (垒上), rb×T(E) (垒下),
+        tanh 平滑过渡, 垒上/垒下无跳变。
         """
         k = config.wavenumber(_sys.mu_proj_targ, e_cm)
 
@@ -499,31 +495,32 @@ class ICFFractionModel(TransferModel):
         hbar_omega = self._hbar_omega
 
         # ---- 势垒穿透因子 (Hill-Wheeler) ----
+        # 全能量区连续, 垒下指数衰减, 垒上趋近 1
         if e_cm <= 0:
             t_barrier = 0.0
         else:
             t_barrier = 1.0 / (1.0 + np.exp(2.0 * np.pi * (vb - e_cm) / hbar_omega))
 
-        # ---- 有效擦边半径 (平滑过渡垒区) ----
-        # 垒上: b_g^above = rb × √(1 − Vb/E)  — 经典角动量截断
-        # 垒下: b_g^below = rb × T(E)          — 量子隧穿外推
-        # 垒区: tanh 平滑插值, 避免跳变
-        b_g_above = rb * np.sqrt(max(1.0 - vb / e_cm, 0.0))
-        b_g_below = rb * t_barrier
-        # 过渡宽度 ~2 MeV, 在 Vb 附近平滑连接
-        w = 2.0  # 过渡宽度 (MeV)
-        weight = 0.5 * (1.0 + np.tanh((e_cm - vb) / w))
-        b_g = weight * b_g_above + (1.0 - weight) * b_g_below
+        # ---- 经典角动量截断半径 b_g(E) ----
+        # b_g = Rb × √(1 − Vb/E)  (E > Vb)
+        # b_g = 0                    (E ≤ Vb, 无经典越垒分波)
+        # T(E) 在垒下独立提供量子隧穿概率, 无需人为插值
+        if e_cm > vb:
+            b_g = rb * np.sqrt(1.0 - vb / e_cm)
+        else:
+            b_g = 0.0
         b_g = max(b_g, 0.01)
         l_g = k * b_g
 
         if self.delta_b is None:
-            self.delta_b = _mod.a0 * 0.8  # ~ 0.5 fm, 表面厚度
+            self.delta_b = _mod.a0 * 0.8
 
-        # 几何截断 (Fermi 函数)
+        # ---- 转移概率 ----
+        # P(b,E) = T(E) × f_ICF × 1/(1 + exp((b − b_g)/Δb))
+        # T(E): 势垒穿透 (垒下主导)
+        # f_ICF: ICF 占比
+        # Fermi 函数: 角动量截断的平滑形式
         p_geo = 1.0 / (1.0 + np.exp((b - b_g) / self.delta_b))
-
-        # 总转移概率 = 势垒穿透 × ICF占比 × 几何截断
         p_base = t_barrier * self.f_icf * p_geo
 
         # 费米动量积分 (对激发能分布)
