@@ -155,11 +155,10 @@ def main():
 
     # ---- 参数设置 ----
     if args.quick:
-        _mod.n_b = 30
         _mod.n_theta = 20
-        args.n_fermi = 1000
+        args.n_fermi = 500
         args.cascades = 1000
-        print(">>> 快速测试模式 <<<")
+        print(">>> 快速测试模式 (减少抽样数, 精度与标准模式一致) <<<")
 
     if args.energy:
         e_lab_range = np.arange(args.energy[0], args.energy[1] + args.energy[2]/2,
