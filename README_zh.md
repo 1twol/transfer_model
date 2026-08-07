@@ -1,3 +1,10 @@
+
+<p align="center">
+  <a href="./README.md">English</a>
+  &nbsp;·&nbsp;
+  <strong>简体中文</strong>
+</p>
+
 # transfer_model
 
 特洛伊木马方法的半经典三体转移反应模型。
