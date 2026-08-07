@@ -436,9 +436,9 @@ class ICFFractionModel(TransferModel):
 
     物理图像:
       - 势垒穿透: T(E) = 1/(1 + exp(2π(V_CB − E_cm)/(ħω)))
+      - 有效擦边半径: b_g(E) = r_int × T(E)  (垒上/垒下统一平滑)
       - 几何截断: P_geo(b) = 1/(1 + exp((b − b_g(E))/Δb))
-        其中 b_g(E) = r_int × √(1 − V_CB/E_cm)  (垒上)
-                     r_int × exp(−(V_CB−E)/ħω)  (垒下)
+      - 总概率: P(b, E) = T(E) × f_ICF × P_geo(b)
       - ICF 占比 f_ICF ≈ 25% (Lei & Moro 2019)
       - 费米运动提供激发能展宽
 
