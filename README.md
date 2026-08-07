@@ -1,3 +1,10 @@
+
+<p align="center">
+  <strong>English</strong>
+  &nbsp;·&nbsp;
+  <a href="./README_zh.md">简体中文</a>
+</p>
+
 # transfer_model
 
 Semiclassical three-body transfer reaction model for the Trojan Horse Method.
