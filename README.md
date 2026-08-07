@@ -17,10 +17,10 @@ git clone https://github.com/1twol/transfer_model.git
 cd transfer_model
 
 # Create and activate a virtual environment
-python -m venv venv
-source venv/bin/activate      # Linux / macOS
+python -m venv .venv
+source .venv/bin/activate      # Linux / macOS
 # or
-venv\Scripts\activate         # Windows
+.venv\Scripts\activate         # Windows
 
 # Install dependencies
 pip install -r requirements.txt
@@ -165,7 +165,8 @@ transfer_model/
 ├── tests/
 │   └── test_kinematics.py  # Kinematics unit tests
 ├── requirements.txt
-└── README.md
+├── README.md
+└── README_zh.md
 ```
 
 ---

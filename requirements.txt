@@ -1,0 +1,6 @@
+# Core computation
+numpy>=1.21.0
+scipy>=1.7.0
+
+# Plotting (optional, used by post_process.py for visualization)
+matplotlib>=3.4.0
