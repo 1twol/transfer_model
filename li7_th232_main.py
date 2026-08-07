@@ -121,11 +121,11 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  %(prog)s                          # 完整计算 (Fermi-Integrated 模型)
-  %(prog)s --quick                  # 快速测试 (Tunneling 模型, 少抽样)
-  %(prog)s --model qwindow          # Q 值窗口隧穿模型
-  %(prog)s --energy 25 40 5         # 自定义能量 25-40 MeV, 步长 5
-  %(prog)s --no-plot                # 不画图
+  %(prog)s                          # 默认 ICF 模型, 完整计算
+  %(prog)s --quick                  # 快速测试 (只算激发函数, 精度相同)
+  %(prog)s --model fermi            # 费米动量积分模型
+  %(prog)s --energy 25 40 5         # 自定义能量范围
+  %(prog)s --no-plot --no-pace4     # 只算, 不画图不生成 PACE4
   %(prog)s --output-dir ./results   # 指定输出目录
         """
     )
