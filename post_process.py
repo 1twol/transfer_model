@@ -133,7 +133,7 @@ def write_single_pace(outfile: str,
     outdir = os.path.dirname(outfile)
     if outdir:
         os.makedirs(outdir, exist_ok=True)
-    with open(outfile, "w", newline="") as f:
+    with open(outfile, "w", newline="", encoding="utf-8") as f:
         f.write(content)
 
 
@@ -220,7 +220,7 @@ def generate_pace4_from_spectrum(e_star_spec: Dict,
         f.write(f"# Total σ = {total_sigma:.4e} mb\n")
         f.write(f"# Mean E* = {e_star_spec.get('e_star_mean', 0):.2f} MeV\n")
         f.write(f"# Std E*  = {e_star_spec.get('e_star_std', 0):.2f} MeV\n")
-        f.write(f"# Spin distribution: sharp-cutoff at L_g (⚠ 非CCFULL分波)\n")
+        f.write(f"# Spin distribution: sharp-cutoff at L_g (not CCFULL partial waves)\n")
         f.write(f"#\n")
         f.write(f"# {'Idx':>4s} {'EEXCN':>8s} {'σ(mb)':>12s} {'%':>6s}  File\n")
         for i, fi in enumerate(files):

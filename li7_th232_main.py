@@ -249,7 +249,7 @@ def main():
         print(f"    输出目录: {pace_dir}")
         print(f"    生成 {len(meta['files'])} 个 .pace 文件")
         print(f"    总截面: {meta['total_sigma_mb']:.4e} mb")
-        print(f"    ⚠ 分波截面用 sharp-cutoff L_g 近似，非 CCFULL partial.dat")
+        print(f"    [WARNING] spin dist: sharp-cutoff L_g (not CCFULL partial waves)")
         print(f"    汇总文件: {meta['summary_path']}")
 
         # 同时生成 EEXCN 表 (供 generate_pace.py 使用)
