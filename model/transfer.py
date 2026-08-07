@@ -452,6 +452,25 @@ class ICFFractionModel(TransferModel):
         self.f_icf = f_icf
         self.delta_b = delta_b  # None → 自动
         self._use_numerov = use_numerov_wf
+        # 缓存势垒参数 (只算一次)
+        self._rb: float | None = None
+        self._vb: float | None = None
+        self._hbar_omega: float | None = None
+
+    def _ensure_barrier(self):
+        """计算 WS+Coulomb 势垒参数 (只算一次, 缓存)"""
+        if self._rb is not None:
+            return
+        from .potentials import total_potential, find_barrier
+        r_grid = np.linspace(0.5, 30.0, 2000)
+        v_tot = total_potential(r_grid, 1.0,
+                                 _sys.proj.Z, _sys.proj.A,
+                                 _sys.targ.Z, _sys.targ.A,
+                                 _mod.v0_in, _mod.r0_in, _mod.a_in)
+        rb, vb, curv = find_barrier(r_grid, v_tot)
+        self._rb = rb
+        self._vb = vb
+        self._hbar_omega = config.HBARC * np.sqrt(max(abs(curv), 1e-6) / _sys.mu_proj_targ)
 
     def probability(self, e_cm: float, b: float,
                      n_fermi_samples: int = 2000,
@@ -463,26 +482,40 @@ class ICFFractionModel(TransferModel):
           2. 几何截断: P_geo(b) = f_ICF / [1 + exp((b − b_g(E))/Δb)]
           3. 费米动量积分 → 激发能分布
 
+<<<<<<< HEAD
         关键: b_g(E) = r_int × √(1 − V_CB/E_cm) 随能量增长,
         自然给出垒下指数衰减 + 垒上逐渐饱和的行为。
+=======
+        关键: b_g(E) = r_int × T(E), 垒上/垒下统一平滑, 自然给出
+        垒下指数衰减 + 垒上逐渐饱和的行为。
+>>>>>>> 1ebfb4582af22f08fbdb80f34d50efecabf68f02
         """
-        r_int = config.interaction_radius(_sys.proj.A, _sys.targ.A, _mod.r0)
-        v_cb = _sys.proj.Z * _sys.targ.Z * config.E2 / r_int    # 库仑势垒高度
         k = config.wavenumber(_sys.mu_proj_targ, e_cm)
 
-        # ---- 势垒穿透因子 (Hill-Wheeler 型) ----
-        # 曲率 ħω 用经验公式: ħω ≈ 4-5 MeV for heavy systems
-        hbar_omega = 4.5  # MeV, typical for heavy-ion barriers
+        # ---- 势垒参数 (缓存, 只算一次) ----
+        self._ensure_barrier()
+        rb = self._rb
+        vb = self._vb
+        hbar_omega = self._hbar_omega
+
+        # ---- 势垒穿透因子 (Hill-Wheeler) ----
         if e_cm <= 0:
             t_barrier = 0.0
         else:
-            t_barrier = 1.0 / (1.0 + np.exp(2.0 * np.pi * (v_cb - e_cm) / hbar_omega))
+            t_barrier = 1.0 / (1.0 + np.exp(2.0 * np.pi * (vb - e_cm) / hbar_omega))
 
-        # ---- 有效擦边半径 (统一公式, 垒上/垒下平滑过渡) ----
-        # b_g(E) = r_int × T_barrier(E)  → 垒下指数衰减, 垒上趋近 r_int
-        b_g = r_int * t_barrier
+        # ---- 有效擦边半径 (平滑过渡垒区) ----
+        # 垒上: b_g^above = rb × √(1 − Vb/E)  — 经典角动量截断
+        # 垒下: b_g^below = rb × T(E)          — 量子隧穿外推
+        # 垒区: tanh 平滑插值, 避免跳变
+        b_g_above = rb * np.sqrt(max(1.0 - vb / e_cm, 0.0))
+        b_g_below = rb * t_barrier
+        # 过渡宽度 ~2 MeV, 在 Vb 附近平滑连接
+        w = 2.0  # 过渡宽度 (MeV)
+        weight = 0.5 * (1.0 + np.tanh((e_cm - vb) / w))
+        b_g = weight * b_g_above + (1.0 - weight) * b_g_below
+        b_g = max(b_g, 0.01)
         l_g = k * b_g
-        b_g = max(b_g, 0.01)  # 防止为 0
 
         if self.delta_b is None:
             self.delta_b = _mod.a0 * 0.8  # ~ 0.5 fm, 表面厚度
