@@ -89,7 +89,7 @@ def compute_excitation_function(model: TransferModel,
 
     Returns
     -------
-    result : {'e_lab', 'e_cm', 'sigma', 'sigma_ruth', 'lg'}
+    result : {'e_lab', 'e_cm', 'sigma', 'sigma_rutherford', 'lg'}
     """
     if e_lab_range is None:
         e_lab_range = np.arange(_mod.e_lab_min,
@@ -119,14 +119,14 @@ def compute_excitation_function(model: TransferModel,
                 p_grid[j] = model.probability(e_cm, b)
 
         # σ = 2π ∫ b P(b) db
-        # 转换到 mb: 1 fm² = 10⁻² mb
+        # 1 fm² = 10 mb
         integrand = 2.0 * np.pi * b_grid * p_grid  # fm²
-        sigma[i] = simpson(integrand, b_grid) * 1e-2  # → mb
+        sigma[i] = simpson(integrand, b_grid) * 10  # → mb
 
         # 卢瑟福截面 (全融合上限: P=1 for b < b_g, P=0 for b > b_g)
         b_g = l_g / config.wavenumber(_sys.mu_proj_targ, e_cm)
         idx_g = np.searchsorted(b_grid, b_g)
-        sigma_rutherford[i] = np.pi * b_g**2 * 1e-2  # geometric, mb
+        sigma_rutherford[i] = np.pi * b_g**2 * 10  # geometric, mb
 
         if verbose:
             print(f"  E_lab={e_lab:.0f} MeV, E_cm={e_cm:.2f} MeV, "
@@ -189,7 +189,7 @@ def compute_angular_distribution(model: TransferModel,
         a = eta / k
         sin_half = np.sin(theta / 2.0)
         dsdo_ruth[i] = (a / (2.0 * k * sin_half**2))**2  # fm²/sr
-        dsdo_ruth[i] *= 1e-2  # → mb/sr
+        dsdo_ruth[i] *= 10  # → mb/sr
 
         # 转移截面
         dsdo[i] = dsdo_ruth[i] * p_tr
@@ -284,8 +284,8 @@ def compute_excitation_energy_spectrum(model: TransferModel,
         if verbose and (j % max(1, n_b // 4) == 0):
             print(f"  b={b:.1f} fm, <P>={np.mean(p_values):.4e}")
 
-    # 单位转换: fm²/MeV → mb/MeV
-    dsigma_de *= 1e-2
+    # 单位转换: 1 fm²/MeV = 10 mb/MeV
+    dsigma_de *= 10
     # bin宽度归一化
     de = e_star_edges[1] - e_star_edges[0]
     dsigma_de /= de
