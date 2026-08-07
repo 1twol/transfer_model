@@ -481,50 +481,41 @@ class ICFFractionModel(TransferModel):
                      return_details: bool = False):
         """ICF 转移概率
 
-        三步:
-          1. 势垒穿透: T(E) = 1/(1 + exp(2π(Vb − E_cm)/(ħω)))
-          2. 经典角动量截断: Fermi 函数, b_g = Rb·√(1−Vb/E)
-          3. 费米动量积分 -> 激发能分布
+        P(b,E) = T(E) × f_ICF / [1 + exp((b − b_g)/Δb)]
 
-        T(E) 在全能区连续, 垒下提供量子隧穿概率;
-        b_g 在垒下为 0, 垒上按离心势截断公式增长。无需人为插值。
+        n_fermi_samples=0 时只返回几何概率, 不做费米动量积分。
         """
         k = config.wavenumber(_sys.mu_proj_targ, e_cm)
 
-        # ---- 势垒参数 (缓存, 只算一次) ----
         self._ensure_barrier()
         rb = self._rb
         vb = self._vb
         hbar_omega = self._hbar_omega
 
-        # ---- 势垒穿透因子 (Hill-Wheeler) ----
-        # 全能量区连续, 垒下指数衰减, 垒上趋近 1
         if e_cm <= 0:
             t_barrier = 0.0
         else:
             t_barrier = 1.0 / (1.0 + np.exp(2.0 * np.pi * (vb - e_cm) / hbar_omega))
 
-        # ---- 经典角动量截断半径 b_g(E) ----
-        # b_g = Rb × √(1 − Vb/E)  (E > Vb)
-        # b_g = 0                    (E ≤ Vb, 无经典越垒分波)
-        # T(E) 在垒下独立提供量子隧穿概率, 无需人为插值
         if e_cm > vb:
             b_g = rb * np.sqrt(1.0 - vb / e_cm)
         else:
             b_g = 0.0
         b_g = max(b_g, 0.01)
-        l_g = k * b_g
 
         if self.delta_b is None:
             self.delta_b = _mod.a0 * 0.8
 
-        # ---- 转移概率 ----
-        # P(b,E) = T(E) × f_ICF × 1/(1 + exp((b − b_g)/Δb))
-        # T(E): 势垒穿透 (垒下主导)
-        # f_ICF: ICF 占比
-        # Fermi 函数: 角动量截断的平滑形式
         p_geo = 1.0 / (1.0 + np.exp((b - b_g) / self.delta_b))
         p_base = t_barrier * self.f_icf * p_geo
+
+        # 不做费米动量积分: 直接返回几何概率
+        if n_fermi_samples <= 0:
+            if return_details:
+                return p_base, {'d': b_g, 'b_g': b_g, 'probabilities': np.array([p_base]),
+                                 'e_star': np.array([_sys.q_capture]),
+                                 'q_eff': np.array([_sys.q_total]), 'q_opt': 0.0}
+            return p_base
 
         # 费米动量积分 (对激发能分布)
         k_mag, k_theta, k_phi = self.fermi_sampler.sample(n_fermi_samples)

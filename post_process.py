@@ -50,20 +50,18 @@ def _make_pace_header(cascades: int, facla: int = 10) -> str:
 def _build_spin_distribution(e_cm: float, total_sigma_mb: float,
                                 l_max: int = 0,
                                 model=None) -> Tuple[np.ndarray, int]:
-    """构建分波截面数组 σ_L — 从经典 P(b) 积分映射到离散分波
+    """构建分波截面数组 σ_L
 
-    映射逻辑（非量子简并度）:
+    标准分波展开公式（与 CCFULL partial.dat / PACE4 约定一致）:
 
-      经典积分:  σ = 2π ∫₀^∞ b db P(b)  = (2π/k²) ∫₀^∞ L dL P(L/k)
-      PACE4 离散: σ = Σ_{L=0}^{Lmax} (2L+1) σ_L
+      σ_L(mb) = (πħ²/2μE) × (2L+1) × P(L/k) × 10
 
-      两式对等 (ΔL=1):
-        σ_L = (2π/k²) · L/(2L+1) · P(b = L/k)
+    其中 P(L/k) 是半经典穿透系数, b ↔ L 映射为 b = L/k。
+    (2L+1) 是量子角动量简并度 —— 标准分波分解的固有因子。
+    πħ²/2μE = π/k² 是约化波长平方的面积因子。
 
-    这里 L/(2L+1) 是 b→L 坐标变换的 Jacobian 因子:
-      - 低 L: L/(2L+1) ≈ L → σ_L ∝ L (上升)
-      - 高 L: L/(2L+1) ≈ 1/2 → σ_L ∝ P(b) (截断下降)
-      - 峰值: 先增后减, 来自积分测度, 非 (2L+1) 量子简并
+    形状: L=0 非零, (2L+1) 线性上升, P(b) 在擦边区截断下降,
+    峰值在 L ≈ L_g/2 ~ L_g（取决于截断宽度）。
 
     返回 (sigma_L 数组, 实际 l_max)
     """
@@ -76,29 +74,27 @@ def _build_spin_distribution(e_cm: float, total_sigma_mb: float,
 
     n_l = l_max + 1
     k = config.wavenumber(_sys.mu_proj_targ, e_cm)
-    prefactor = 2.0 * np.pi / k**2 if k > 0 else 1.0
 
-    # σ_L = prefactor × L/(2L+1) × P(L/k), 未归一化
+    # 约化波长面积因子: π/k² (fm²), 乘以 10 → mb
+    lambda2_pi = np.pi / k**2 * 10 if k > 0 else 1e-10
+
+    # σ_L = λ²π × (2L+1) × P(L/k), 未归一化
     raw = np.zeros(n_l)
     for L in range(n_l):
         b = L / k if k > 0 else 0
-        jacobian = L / (2 * L + 1) if L > 0 else 0.0
-
         if model is not None and k > 0:
             try:
                 p = model.probability(e_cm, b, n_fermi_samples=0)
             except TypeError:
                 p = model.probability(e_cm, b)
         else:
-            b_g = l_g / k if k > 0 else r_int
-            p = 1.0 / (1.0 + np.exp((b - b_g) / 0.5))
+            p = 1.0 / (1.0 + np.exp((b - r_int) / 0.5))
+        raw[L] = max(lambda2_pi * (2 * L + 1) * abs(p), 0.0)
 
-        raw[L] = max(prefactor * jacobian * abs(p), 0.0)
-
-    # 归一化: Σ (2L+1) σ_L = total_sigma_mb
-    total_weight = sum((2*L+1) * raw[L] for L in range(n_l))
-    if total_weight > 1e-30:
-        sigmas = raw * (total_sigma_mb / total_weight)
+    # 归一化使总截面对等: Σ σ_L ≈ total_sigma_mb
+    total_sum = raw.sum()
+    if total_sum > 1e-30:
+        sigmas = raw * (total_sigma_mb / total_sum)
     else:
         sigmas = raw
 
