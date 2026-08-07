@@ -13,18 +13,18 @@ li7_th232_main.py — ⁷Li + ²³²Th 三体转移模型主程序
 包含物理:
   ✓ ⁷Li 内部费米动量分布 (高斯近似)
   ✓ 卢瑟福擦边轨道
-  ✓ 指数隧穿转移概率 + Q 值窗口
+  ✓ Hill-Wheeler 势垒穿透 + 经典角动量截断
   ✓ 库仑后加速
   ✓ 角度依赖
   ✓ 激发能谱 → PACE4 输入
 
 用法:
-  python li7_th232_main.py                    # 默认 ICF 模型, 完整计算
-  python li7_th232_main.py --quick            # 快速测试模式
-  python li7_th232_main.py --model icf        # ICF 占比校准 (推荐)
-  python li7_th232_main.py --model fermi      # 费米动量积分 + 隧穿
-  python li7_th232_main.py --model tunneling  # 简单隧穿模型
-  python li7_th232_main.py --energy 20 45 5   # 自定义能量范围
+  python li7_th232_main.py                        # 默认 ICF 模型, 中位能量 PACE4
+  python li7_th232_main.py --quick                # 快速测试 (只算激发函数)
+  python li7_th232_main.py --e-lab 32            # 指定 E_lab=32 MeV 生成 PACE4
+  python li7_th232_main.py --all                  # 所有能量点各生成 PACE4
+  python li7_th232_main.py --energy 20 45 5       # 自定义能量范围
+  python li7_th232_main.py --model fermi          # 费米动量积分模型
 """
 
 import argparse
@@ -112,6 +112,44 @@ def print_kinematics_table(e_lab_range: np.ndarray):
 
 
 # ============================================================
+# PACE4 批量生成
+# ============================================================
+
+def generate_pace4_for_energies(model, e_lab_list, exc_result,
+                                 output_dir, label_prefix, cascades, facla,
+                                 n_fermi=5000, n_b=None, verbose=True):
+    """对多个能量点各生成 PACE4 文件 (含各自的 E* 谱)"""
+    if n_b is None:
+        n_b = min(_mod.n_b, 40)
+    n_fermi_es = max(n_fermi, 2000)
+
+    for e_lab in e_lab_list:
+        e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+
+        if verbose:
+            print(f"\n  E_lab={e_lab:.0f} MeV (E_cm={e_cm:.2f} MeV)")
+
+        # 算 E* 谱
+        spec = compute_excitation_energy_spectrum(
+            model, e_lab=e_lab, n_b=n_b, n_fermi=n_fermi_es, verbose=False
+        )
+
+        # 输出目录
+        pace_dir = os.path.join(output_dir, f"E={e_lab:.0f}MeV")
+
+        meta = generate_pace4_from_spectrum(
+            spec, e_cm=e_cm, output_dir=pace_dir,
+            label=f"{label_prefix} E={e_lab:.0f}MeV",
+            cascades=cascades, facla=facla
+        )
+
+        if verbose:
+            print(f"    <E*>={spec['e_star_mean']:.1f} MeV, "
+                  f"σ={meta['total_sigma_mb']:.4e} mb, "
+                  f"{len(meta['files'])} files → {pace_dir}")
+
+
+# ============================================================
 # 主入口
 # ============================================================
 
@@ -121,23 +159,28 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  %(prog)s                          # 默认 ICF 模型, 完整计算
-  %(prog)s --quick                  # 快速测试 (只算激发函数, 精度相同)
-  %(prog)s --model fermi            # 费米动量积分模型
+  %(prog)s                          # 默认: 激发函数 + 中位能量 PACE4
+  %(prog)s --quick                  # 快速测试 (只算激发函数)
+  %(prog)s --e-lab 32               # 指定 E_lab=32 MeV 生成 PACE4
+  %(prog)s --all                    # 所有能量点各生成 PACE4
+  %(prog)s --all --no-plot          # 全能量 PACE4, 不画图
   %(prog)s --energy 25 40 5         # 自定义能量范围
-  %(prog)s --no-plot --no-pace4     # 只算, 不画图不生成 PACE4
-  %(prog)s --output-dir ./results   # 指定输出目录
+  %(prog)s --model fermi            # 费米动量积分模型
         """
     )
 
     parser.add_argument('--model', type=str, default='icf',
                         choices=['tunneling', 'qwindow', 'dwba', 'fermi', 'icf'],
-                        help='转移概率模型 (default: fermi)')
+                        help='转移概率模型 (default: icf)')
     parser.add_argument('--energy', type=float, nargs=3,
                         metavar=('MIN', 'MAX', 'STEP'),
                         help='E_lab 范围 (MeV), 例: --energy 20 40 2')
+    parser.add_argument('--e-lab', type=float, default=None,
+                        help='指定单个 E_lab (MeV) 生成 PACE4')
+    parser.add_argument('--all', action='store_true',
+                        help='对所有能量点各生成 PACE4')
     parser.add_argument('--quick', action='store_true',
-                        help='快速测试模式 (简化参数)')
+                        help='快速测试模式 (只算激发函数)')
     parser.add_argument('--n-fermi', type=int, default=5000,
                         help='费米动量抽样数 (default: 5000)')
     parser.add_argument('--no-plot', action='store_true',
@@ -152,6 +195,11 @@ def main():
                         help='输出目录 (默认: ./output_<model>_<timestamp>)')
 
     args = parser.parse_args()
+
+    # ---- 互斥检查 ----
+    if args.e_lab is not None and args.all:
+        print("[ERROR] --e-lab 和 --all 不能同时使用")
+        sys.exit(1)
 
     # ---- 参数设置 ----
     if args.quick:
@@ -188,7 +236,6 @@ def main():
     t_start = time.time()
 
     if args.quick:
-        # 快速模式: 只算激发函数
         print(">>> 快速模式: 仅计算激发函数 <<<")
         exc = compute_excitation_function(model, e_lab_range, args.n_fermi, verbose=True)
         result = {'excitation': exc}
@@ -220,7 +267,7 @@ def main():
 
     spec = result.get('e_star_spectrum', {})
     if spec:
-        print(f"\n  [激发能谱]")
+        print(f"\n  [激发能谱 (中位能量)]")
         print(f"    平均 E*  = {spec.get('e_star_mean', 0):.2f} MeV")
         print(f"    标准差   = {spec.get('e_star_std', 0):.2f} MeV")
         print(f"    Q_capture = {spec.get('q_capture', 0):.2f} MeV")
@@ -234,28 +281,59 @@ def main():
             print(f"    画图失败: {e}")
 
     # ---- PACE4 输入 ----
-    if not args.no_pace4 and spec:
+    if not args.no_pace4:
         print("\n  [PACE4 输入]")
-        pace_dir = os.path.join(args.output_dir, f"Li7+Th232_{args.model}")
-        # 用中位能量计算 spin distribution
-        e_mid = e_lab_range[len(e_lab_range)//2]
-        e_cm_mid = config.e_lab_to_e_cm(e_mid, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
-        meta = generate_pace4_from_spectrum(spec, e_cm=e_cm_mid,
-                                              output_dir=pace_dir,
-                                              label=f"Li7+Th232 {args.model}",
-                                              cascades=args.cascades,
-                                              facla=args.facla)
-        print(f"    输出目录: {pace_dir}")
-        print(f"    生成 {len(meta['files'])} 个 .pace 文件")
-        print(f"    总截面: {meta['total_sigma_mb']:.4e} mb")
-        print(f"    [WARNING] spin dist: sharp-cutoff L_g (not CCFULL partial waves)")
-        print(f"    汇总文件: {meta['summary_path']}")
 
-        # 同时生成 EEXCN 表 (供 generate_pace.py 使用)
+        if args.all:
+            # 所有能量点各算 E* 谱 + PACE4
+            print(f"  模式: --all ({len(e_lab_range)} 个能量点)")
+            generate_pace4_for_energies(
+                model, e_lab_range, exc,
+                output_dir=os.path.join(args.output_dir, "Li7+Th232_icf"),
+                label_prefix=f"Li7+Th232 {args.model}",
+                cascades=args.cascades, facla=args.facla,
+                n_fermi=args.n_fermi, verbose=True
+            )
+
+        elif args.e_lab is not None:
+            # 单能量
+            e_lab = args.e_lab
+            e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+            print(f"  模式: --e-lab {e_lab:.0f} MeV")
+
+            spec_e = compute_excitation_energy_spectrum(
+                model, e_lab=e_lab, n_b=min(_mod.n_b, 40), n_fermi=max(args.n_fermi, 2000),
+                verbose=False
+            )
+            pace_dir = os.path.join(args.output_dir, f"Li7+Th232_E={e_lab:.0f}MeV")
+            meta = generate_pace4_from_spectrum(
+                spec_e, e_cm=e_cm, output_dir=pace_dir,
+                label=f"Li7+Th232 {args.model} E={e_lab:.0f}MeV",
+                cascades=args.cascades, facla=args.facla
+            )
+            print(f"    E* = {spec_e['e_star_mean']:.1f} MeV, "
+                  f"σ = {meta['total_sigma_mb']:.4e} mb, "
+                  f"{len(meta['files'])} files → {pace_dir}")
+
+        else:
+            # 默认: 中位能量
+            e_mid = e_lab_range[len(e_lab_range)//2]
+            e_cm_mid = config.e_lab_to_e_cm(e_mid, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+            print(f"  模式: 默认 (中位能量 E_lab={e_mid:.0f} MeV)")
+
+            pace_dir = os.path.join(args.output_dir, f"Li7+Th232_E={e_mid:.0f}MeV")
+            meta = generate_pace4_from_spectrum(
+                spec, e_cm=e_cm_mid, output_dir=pace_dir,
+                label=f"Li7+Th232 {args.model} E={e_mid:.0f}MeV",
+                cascades=args.cascades, facla=args.facla
+            )
+            print(f"    {len(meta['files'])} files → {pace_dir}")
+            print(f"    [spin dist: sharp-cutoff L_g, not CCFULL partial waves]")
+
+        # EEXCN 汇总表 (全能量)
         eexcn_path = os.path.join(args.output_dir, "eexcn_table.txt")
-        generate_eexcn_table(result['excitation'], output_path=eexcn_path)
+        generate_eexcn_table(exc, output_path=eexcn_path)
         print(f"    EEXCN 表: {eexcn_path}")
-        print(f"    用法: python generate_pace.py ... --e-star <表中EEXCN值>")
 
     # ---- 保存原始结果 ----
     result_path = os.path.join(args.output_dir, "result_summary.txt")
