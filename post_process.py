@@ -214,7 +214,7 @@ def generate_pace4_from_spectrum(e_star_spec: Dict,
 
     # 汇总文件
     summary_path = os.path.join(output_dir, "pace4_summary.txt")
-    with open(summary_path, 'w') as f:
+    with open(summary_path, 'w', encoding='utf-8') as f:
         f.write(f"# PACE4 Summary: {label}\n")
         f.write(f"# CN: Z={z_cn}, A={a_cn}\n")
         f.write(f"# Total σ = {total_sigma:.4e} mb\n")
@@ -327,7 +327,7 @@ def generate_eexcn_table(exc_result: Dict,
     table = "\n".join(lines)
 
     if output_path:
-        with open(output_path, 'w') as f:
+        with open(output_path, 'w', encoding='utf-8') as f:
             f.write(table + "\n")
         print(f"  [eexcn] EEXCN 表 → {output_path}")
 
