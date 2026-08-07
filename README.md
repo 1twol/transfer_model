@@ -13,8 +13,6 @@ Reaction: **⁷Li + ²³²Th → α + t + ²³²Th → α + ²³⁵Pa\***
 
 Computes transfer cross sections, angular distributions, and excitation energy spectra by explicitly modeling ⁷Li's α + t cluster structure, the t-transfer step, and the final two-body Coulomb breakup. Outputs PACE4 input files for statistical evaporation calculations.
 
-All computation is pure Python (NumPy / SciPy) — no external program calls.
-
 ---
 
 ## Installation
