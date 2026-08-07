@@ -432,18 +432,21 @@ class FermiIntegratedModel(TransferModel):
 # ============================================================
 
 class ICFFractionModel(TransferModel):
-    """基于 ICF 占比的实验校准模型 (含势垒穿透)
+    """基于 ICF 占比的半经典转移模型
 
-    物理图像:
-      - 势垒穿透: T(E) = 1/(1 + exp(2π(Vb − E_cm)/(ħω)))
-      - 有效擦边半径: b_g(E) = rb·√(1−Vb/E) (垒上), rb·T(E) (垒下)
-      - tanh 平滑过渡垒区
-      - 几何截断: P_geo(b) = 1/(1 + exp((b − b_g(E))/Δb))
-      - 总概率: P(b, E) = T(E) × f_ICF × P_geo(b)
-      - ICF 占比 f_ICF ≈ 25% (Lei & Moro 2019)
-      - 费米运动提供激发能展宽
+    物理:
+      P(b, E) = T(E) × f_ICF / [1 + exp((b − b_g(E))/Δb)]
 
-    垒下指数上升 + 垒上逐渐饱和，在 34-40 MeV 与 CCFULL ICF 吻合 ~20%。
+    其中:
+      - T(E) = 1/(1 + exp(2π(Vb−E_cm)/(ħω)))  Hill-Wheeler 势垒穿透
+      - b_g(E) = Rb·√(1−Vb/E) for E > Vb (经典角动量截断)
+      - b_g(E) = 0             for E ≤ Vb (无经典越垒分波)
+      - f_ICF = 0.25 (Lei & Moro 2019)
+
+    垒下: T(E) 主导指数衰减, b_g=0, 单势垒量子隧穿
+    垒上: b_g 根据离心势截断增长, T(E)→1, 经典几何截面
+
+    势垒参数 (Rb, Vb, ħω) 从 WS+Coulomb 数值有效势求取, 非经验值。
     """
 
     def __init__(self, f_icf: float = 0.25,
@@ -476,15 +479,15 @@ class ICFFractionModel(TransferModel):
     def probability(self, e_cm: float, b: float,
                      n_fermi_samples: int = 2000,
                      return_details: bool = False):
-        """ICF 校准转移概率
+        """ICF 转移概率
 
         三步:
           1. 势垒穿透: T(E) = 1/(1 + exp(2π(Vb − E_cm)/(ħω)))
-          2. 几何截断: P_geo(b) = f_ICF / [1 + exp((b − b_g(E))/Δb)]
+          2. 经典角动量截断: Fermi 函数, b_g = Rb·√(1−Vb/E)
           3. 费米动量积分 -> 激发能分布
 
-        关键: b_g(E) = rb × √(1−Vb/E) (垒上), rb×T(E) (垒下),
-        tanh 平滑过渡, 垒上/垒下无跳变。
+        T(E) 在全能区连续, 垒下提供量子隧穿概率;
+        b_g 在垒下为 0, 垒上按离心势截断公式增长。无需人为插值。
         """
         k = config.wavenumber(_sys.mu_proj_targ, e_cm)
 
