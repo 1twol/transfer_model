@@ -247,7 +247,7 @@ def generate_pace4_single(eexcn: float,
     """从单值 EEXCN 生成一份 .pace (配合 generate_pace.py 使用)
 
     典型用法:
-      >> eexcn = transfer_model 算出的 ⟨E*⟩
+      >> eexcn = transfer_model 算出的 <E*>
       >> generate_pace4_single(eexcn, e_cm, sigma_mb, ...)
       >> 将生成的 .pace 喂给 PACE4
 
@@ -430,7 +430,7 @@ def plot_e_star_spectrum(result: Dict, output_path: str = None):
     ax.axvline(spec['q_capture'], color='gray', ls='--', lw=1,
                label=f"Q_capture={spec['q_capture']:.1f} MeV")
     ax.axvline(spec['e_star_mean'], color='red', ls='-', lw=1.5,
-               label=f"⟨E*⟩={spec['e_star_mean']:.1f} MeV")
+               label=f"<E*>={spec['e_star_mean']:.1f} MeV")
 
     ax.set_xlabel("E* (MeV)")
     ax.set_ylabel("dσ/dE* (mb/MeV)")
