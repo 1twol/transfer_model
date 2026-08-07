@@ -44,7 +44,7 @@ def _make_pace_header(cascades: int, facla: int = 10) -> str:
         cascades  IOUT  MODE  IDSC  ITRACK  IREVERSE  IDIFF  FACLA  DELANG  IROT2  IFB
     其中 FACLA 为能级密度参数 a = A / FACLA。
     """
-    return f"{cascades:5d}    1    3    0    0    1    0{facla:5d}    0    0    0"
+    return f"{int(cascades):5d}    1    3    0    0    1    0{int(facla):5d}    0    0    0"
 
 
 def _build_spin_distribution(e_cm: float, total_sigma_mb: float,
