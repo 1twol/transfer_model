@@ -89,7 +89,7 @@ def compute_excitation_function(model: TransferModel,
 
     Returns
     -------
-    result : {'e_lab', 'e_cm', 'sigma', 'sigma_ruth', 'lg'}
+    result : {'e_lab', 'e_cm', 'sigma', 'sigma_rutherford', 'lg'}
     """
     if e_lab_range is None:
         e_lab_range = np.arange(_mod.e_lab_min,
@@ -119,7 +119,7 @@ def compute_excitation_function(model: TransferModel,
                 p_grid[j] = model.probability(e_cm, b)
 
         # σ = 2π ∫ b P(b) db
-        # 转换到 mb: 1 fm² = 10⁻² mb
+        # 1 fm² = 10 mb
         integrand = 2.0 * np.pi * b_grid * p_grid  # fm²
         sigma[i] = simpson(integrand, b_grid) * 10  # → mb
 
