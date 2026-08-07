@@ -50,13 +50,15 @@ def _make_pace_header(cascades: int, facla: int = 10) -> str:
 def _build_spin_distribution(e_cm: float, total_sigma_mb: float,
                                 l_max: int = 0,
                                 model=None) -> Tuple[np.ndarray, int]:
-    """构建分波截面数组 — 从模型 P(b) 分布采样
+    """构建分波截面数组 σ_L
 
-    将碰撞参数映射为角动量 L ≈ k·b, 用模型的 P(b) 形状
-    填充 σ_L 数组, 然后归一化到 total_sigma_mb。
+    物理:
+      σ_L = (2L+1) × P(b = L/k)  / 归一化 × total_sigma_mb
 
-    这样 .pace 文件里的 σ_L 分布反映了真实的擦边截断形状,
-    而非人为的平坦 sharp-cutoff。
+    (2L+1) 是磁量子数简并度, 使低 L 截面上升;
+    P(b) 提供擦边截断, 使高 L 截面下降。
+    结果: σ_L 先增后减, 在 L ≲ L_g/2 处达到峰值,
+    与 CCFULL partial.dat 的融合分波形状一致。
 
     返回 (sigma_L 数组, 实际 l_max)
     """
@@ -68,33 +70,28 @@ def _build_spin_distribution(e_cm: float, total_sigma_mb: float,
         l_max = l_g
 
     n_l = l_max + 1
-    sigmas = np.zeros(n_l)
-
-    # 用模型计算各 L 分波的 P(b) 形状
     k = config.wavenumber(_sys.mu_proj_targ, e_cm)
-    if model is not None and k > 0:
-        for L in range(min(l_g + 1, n_l)):
-            b = L / k if k > 0 else 0
+
+    # 未归一化的 σ_L ∝ (2L+1) × P(L)
+    raw = np.zeros(n_l)
+    for L in range(n_l):
+        b = L / k if k > 0 else 0
+        if model is not None and k > 0 and b <= l_g / k * 1.5:
             try:
-                # 只取 P(b) 形状, 不用费米抽样
                 p = model.probability(e_cm, b, n_fermi_samples=0)
             except TypeError:
                 p = model.probability(e_cm, b)
-            sigmas[L] = abs(p)
-    else:
-        # 无模型回退: Fermi 函数形状
-        for L in range(min(l_g + 1, n_l)):
-            b = L / k if k > 0 else 0
-            sigmas[L] = 1.0 / (1.0 + np.exp((b - l_g/k) / 0.5))
+        else:
+            # 无模型回退: Fermi 截断
+            p = 1.0 / (1.0 + np.exp((b - l_g/k) / 0.5))
+        raw[L] = max(abs(p), 0.0) * (2 * L + 1)
 
-    # 归一化到总截面
-    s_sum = np.sum(sigmas)
-    if s_sum > 1e-30:
-        sigmas = sigmas / s_sum * (total_sigma_mb / (2 * l_g + 1))
-        # 再 scale 使得 sum((2L+1)*σ_L) = total_sigma_mb
-        weight_sum = np.sum([(2*L+1)*sigmas[L] for L in range(n_l)])
-        if weight_sum > 1e-30:
-            sigmas *= (total_sigma_mb / weight_sum)
+    # 归一化: Σ (2L+1) × σ_L = total_sigma_mb
+    total_weight = np.sum([(2*L+1) * raw[L] for L in range(n_l)])
+    if total_weight > 1e-30:
+        sigmas = raw * (total_sigma_mb / total_weight)
+    else:
+        sigmas = raw
 
     return sigmas, l_max
 
