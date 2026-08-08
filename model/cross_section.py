@@ -312,6 +312,8 @@ def compute_excitation_energy_spectrum(model: TransferModel,
         'e_star_mean': e_star_mean,
         'e_star_std': e_star_std,
         'q_capture': q_capture,
+        'e_lab': e_lab,
+        'e_cm': e_cm,
     }
 
 

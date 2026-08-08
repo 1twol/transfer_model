@@ -446,6 +446,17 @@ def plot_angular_distribution(result: Dict, output_path: str = None):
         plt.show()
 
 
+def _optimal_e_star(e_cm: float) -> float:
+    """库仑匹配最优剩余激发能 E*_opt = Q₀ − Q_opt
+
+    Q_opt = (Z₃Z₄/Z₁Z₂ − 1)·E_cm, 其中 (1,2)=入射道 (7Li,Th), (3,4)=出口道 (α,Pa)。
+    这是经典单值预测; 与模型算出的 E* 分布均值对比, 体现费米运动带来的展宽。
+    """
+    ratio = (_sys.spectator.Z * _sys.product.Z) / (_sys.proj.Z * _sys.targ.Z)
+    q_opt = (ratio - 1.0) * e_cm
+    return _sys.q_total - q_opt
+
+
 def plot_e_star_spectrum(result: Dict, output_path: str = None):
     """画激发能谱"""
     try:
@@ -465,6 +476,12 @@ def plot_e_star_spectrum(result: Dict, output_path: str = None):
                label=f"Q_capture={spec['q_capture']:.1f} MeV")
     ax.axvline(spec['e_star_mean'], color='red', ls='-', lw=1.5,
                label=f"<E*>={spec['e_star_mean']:.1f} MeV")
+
+    # 库仑匹配最优激发能 (Q_opt 单值)
+    if 'e_cm' in spec:
+        e_opt = _optimal_e_star(spec['e_cm'])
+        ax.axvline(e_opt, color='purple', ls=':', lw=2,
+                   label=f"E*_opt(Q_opt)={e_opt:.1f} MeV")
 
     ax.set_xlabel("E* (MeV)")
     ax.set_ylabel("dσ/dE* (mb/MeV)")
@@ -500,6 +517,7 @@ def plot_e_star_spectra_multi(result: Dict, output_path: str = None,
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
     cmap = plt.get_cmap('viridis')
     energies = sorted(specs.keys())
+    opt_vals = []
     for i, e_lab in enumerate(energies):
         spec = specs[e_lab]
         color = cmap(i / max(len(energies) - 1, 1))
@@ -507,9 +525,17 @@ def plot_e_star_spectra_multi(result: Dict, output_path: str = None,
                 label=f"E_lab={e_lab:.0f} MeV")
         ax.fill_between(spec['e_star'], 0, spec['dsigma_de'],
                         color=color, alpha=0.08)
+        # 每条谱对应的库仑匹配最优激发能 (同色点线)
+        if 'e_cm' in spec:
+            e_opt = _optimal_e_star(spec['e_cm'])
+            opt_vals.append(e_opt)
+            ax.axvline(e_opt, color=color, ls=':', lw=1.2, alpha=0.8)
 
     ax.axvline(_sys.q_capture, color='gray', ls='--', lw=1,
                label=f"Q_capture={_sys.q_capture:.1f} MeV")
+    if opt_vals:
+        ax.plot([], [], color='k', ls=':', lw=1.2,
+                label="E*_opt(Q_opt), Coulomb matching")
 
     ax.set_xlabel("E* (MeV)")
     ax.set_ylabel("dσ/dE* (mb/MeV)")
