@@ -201,6 +201,8 @@ def main(args=None):
                         help='PACE4 cascades (default: 10000)')
     parser.add_argument('--facla', type=float, default=10.0,
                         help='能级密度参数 FACLA (default: 10.0)')
+    parser.add_argument('--all-spectra', action='store_true',
+                        help='每个能量点各算一张 E* 谱并画叠加图 (与 .pace 粒度一致)')
     parser.add_argument('--output-dir', type=str, default=None,
                         help='输出目录 (默认: ./output_<model>_<timestamp>)')
 
@@ -251,7 +253,8 @@ def main(args=None):
         exc = compute_excitation_function(model, e_lab_range, args.n_fermi, verbose=True)
         result = {'excitation': exc}
     else:
-        result = compute_full(model, e_lab_range, args.n_fermi, verbose=True)
+        result = compute_full(model, e_lab_range, args.n_fermi,
+                              all_spectra=args.all_spectra, verbose=True)
 
     t_elapsed = time.time() - t_start
     print(f"\n  总耗时: {t_elapsed:.1f} s")

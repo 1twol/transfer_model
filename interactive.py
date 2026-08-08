@@ -130,6 +130,9 @@ def run():
     # 6. 画图
     no_plot = not _yesno("生成图表?", default=True)
 
+    # 6b. 每个能量各画一张 E* 谱? (与 .pace 粒度一致)
+    all_spectra = not no_plot and _yesno("每个能量点各画一张 E* 谱?", default=False)
+
     # 7. 输出目录
     out = _q("输出目录 (回车自动命名)")
 
@@ -142,6 +145,7 @@ def run():
         n_fermi=n_fermi,
         no_plot=no_plot,
         no_pace4=no_pace4,
+        all_spectra=all_spectra,
         cascades=1000 if quick else 10000,
         facla=10.0,
         output_dir=(out or None),
@@ -153,6 +157,7 @@ def run():
     print(f"  energy   = {energy or '默认范围'}")
     print(f"  e_lab    = {e_lab or '-'}")
     print(f"  PACE4    = {'全部能量' if all_ else ('不生成' if no_pace4 else '中位能量')}")
+    print(f"  多能量谱 = {'是' if all_spectra else '否'}")
     print(f"  n_fermi  = {n_fermi}")
     print(f"  output   = {out or '(自动)'}")
     print()

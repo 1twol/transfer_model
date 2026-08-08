@@ -480,6 +480,51 @@ def plot_e_star_spectrum(result: Dict, output_path: str = None):
         plt.show()
 
 
+def plot_e_star_spectra_multi(result: Dict, output_path: str = None,
+                               label: str = ""):
+    """把所有能量点的 E* 谱叠加画在一张图上
+
+    需要 result['e_star_spectra'] = {E_lab: spec} (由 compute_full all_spectra=True 生成)。
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARNING] matplotlib 未安装, 跳过画图")
+        return
+
+    specs = result.get('e_star_spectra')
+    if not specs:
+        print("[WARNING] 没有多能量谱 (e_star_spectra), 跳过叠加图")
+        return
+
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    cmap = plt.get_cmap('viridis')
+    energies = sorted(specs.keys())
+    for i, e_lab in enumerate(energies):
+        spec = specs[e_lab]
+        color = cmap(i / max(len(energies) - 1, 1))
+        ax.plot(spec['e_star'], spec['dsigma_de'], '-', color=color, lw=1.5,
+                label=f"E_lab={e_lab:.0f} MeV")
+        ax.fill_between(spec['e_star'], 0, spec['dsigma_de'],
+                        color=color, alpha=0.08)
+
+    ax.axvline(_sys.q_capture, color='gray', ls='--', lw=1,
+               label=f"Q_capture={_sys.q_capture:.1f} MeV")
+
+    ax.set_xlabel("E* (MeV)")
+    ax.set_ylabel("dσ/dE* (mb/MeV)")
+    ax.legend(fontsize=8, ncol=2)
+    ax.set_title(f"Excitation Energy Spectra vs E_lab {label}".strip())
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    if output_path:
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        print(f"  [plot] 多能量 E* 谱叠加图 → {output_path}")
+    else:
+        plt.show()
+
+
 def plot_all(result: Dict, output_dir: str = "."):
     """一次性画所有图"""
     os.makedirs(output_dir, exist_ok=True)
@@ -489,3 +534,7 @@ def plot_all(result: Dict, output_dir: str = "."):
                                os.path.join(output_dir, "angular_distribution.png"))
     plot_e_star_spectrum(result,
                            os.path.join(output_dir, "e_star_spectrum.png"))
+    # 若有多能量谱, 额外画叠加图
+    if 'e_star_spectra' in result:
+        plot_e_star_spectra_multi(result,
+                                  os.path.join(output_dir, "e_star_spectra_all.png"))

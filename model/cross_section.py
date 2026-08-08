@@ -323,8 +323,15 @@ def compute_full(model: TransferModel,
                   e_lab_range: np.ndarray = None,
                   n_fermi: int = 5000,
                   include_post_accel: bool = True,
+                  all_spectra: bool = False,
                   verbose: bool = True) -> Dict:
-    """完整计算: 激发函数 + 角分布(中位能量) + E* 谱(中位能量)
+    """完整计算: 激发函数 + 角分布(中位能量) + E* 谱
+
+    Parameters
+    ----------
+    all_spectra : 为 True 时, 对能量范围内每个 E_lab 各算一张 E* 谱,
+                  存入 result['e_star_spectra'] = {float(E_lab): spec}。
+                  用较少的 n_fermi 控制耗时。
 
     Returns
     -------
@@ -357,15 +364,29 @@ def compute_full(model: TransferModel,
                                             verbose=verbose)
     result['angular'] = angular
 
-    # 3. 中位能量激发能谱
-    if verbose:
-        print(f"\n{'='*50}")
-        print(f"3. 计算激发能谱 dσ/dE* (E_lab={e_mid:.0f} MeV)...")
-        print("=" * 50)
-    e_star_spec = compute_excitation_energy_spectrum(model, e_mid,
-                                                      n_b=min(_mod.n_b, 40),
-                                                      n_fermi=n_fermi * 2,
-                                                      verbose=verbose)
-    result['e_star_spectrum'] = e_star_spec
+    # 3. 激发能谱
+    if all_spectra:
+        # 每个 E_lab 各算一张谱 (与 .pace 文件粒度一致)
+        e_star_specs = {}
+        n_b_es = min(_mod.n_b, 40)
+        n_fermi_es = max(min(n_fermi, 3000), 1000)  # 控制耗时
+        for e_lab in e_lab_range:
+            if verbose:
+                print(f"  谱 E_lab={e_lab:.1f} MeV ...")
+            e_star_specs[float(e_lab)] = compute_excitation_energy_spectrum(
+                model, e_lab=e_lab, n_b=n_b_es, n_fermi=n_fermi_es, verbose=False)
+        result['e_star_spectra'] = e_star_specs
+        # 兼容: 中位能量谱也保留单张
+        result['e_star_spectrum'] = e_star_specs.get(float(e_mid))
+    else:
+        if verbose:
+            print(f"\n{'='*50}")
+            print(f"3. 计算激发能谱 dσ/dE* (E_lab={e_mid:.0f} MeV)...")
+            print("=" * 50)
+        result['e_star_spectrum'] = compute_excitation_energy_spectrum(
+            model, e_mid,
+            n_b=min(_mod.n_b, 40),
+            n_fermi=n_fermi * 2,
+            verbose=verbose)
 
     return result
