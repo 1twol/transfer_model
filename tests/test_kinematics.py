@@ -67,10 +67,10 @@ def test_cm_lab_conversion():
     print(f"θ_cm={np.degrees(theta_cm):.1f}° → θ_lab={np.degrees(theta_lab):.1f}°")
     print(f"E_cm={e_cm:.1f} MeV → E_lab={e_lab:.1f} MeV")
 
-    # 对于 m_α << m_Pa, θ_lab ≈ θ_cm (近似)
+    # 对于 m_α << m_Pa, θ_lab ≈ θ_cm (比值接近 1)
     ratio = np.degrees(theta_lab) / np.degrees(theta_cm)
-    print(f"  θ_lab/θ_cm ratio = {ratio:.2f}")
-    assert 0.5 < ratio < 2.0, f"角度变换异常"
+    print(f"  θ_lab/θ_cm ratio = {ratio:.3f}")
+    assert 0.90 < ratio < 1.10, f"角度变换异常: {ratio:.3f}"
 
 
 def test_system_params():

@@ -22,6 +22,7 @@ from typing import Callable, Optional, Tuple
 from . import config
 from .kinematics import grazing_angular_momentum
 from .kinematics import RutherfordTrajectory, rutherford_trajectory
+from .kinematics import t_th_relative_energy
 from .structure import FermiMomentumSampler
 
 _sys = config.system
@@ -67,6 +68,23 @@ class TransferModel:
 
         return p_total / n_samples
 
+    def event_distribution(self, e_cm: float, b: float, n_samples: int):
+        """抽样费米事件, 返回每个事件的 (k_mag, k_theta, p_event, e_star) 数组
+
+        p_event 是单个费米事件的转移概率: 对于 P_tr 依赖 k 的模型 (qwindow/fermi)
+        它随 k 变化; 对于 P_tr 与 k 无关的模型 (tunneling/dwba/icf) 恒为 P(b)。
+        e_star = Q_capture + E_rel(t-Th) 是准自由事件激发能。
+
+        icf/fermi 覆写此方法以复用向量化 return_details 路径 (避免逐事件循环)。
+        """
+        k_mag, k_theta, k_phi = self.fermi_sampler.sample(n_samples)
+        p = np.empty(n_samples)
+        es = np.empty(n_samples)
+        for i in range(n_samples):
+            p[i] = self.probability(e_cm, b, k_vec=(k_mag[i], k_theta[i], k_phi[i]))
+            es[i] = t_th_relative_energy(e_cm, k_mag[i], k_theta[i])[1]
+        return k_mag, k_theta, p, es
+
 
 # ============================================================
 # 2. 指数隧穿模型 (最简单)
@@ -86,9 +104,9 @@ class TunnelingModel(TransferModel):
     def __init__(self, kappa: float = None, p0: float = 1.0):
         super().__init__("Tunneling")
         if kappa is None:
-            # 从 t+²³²Th 的束缚能估计
-            be = abs(_sys.q_capture)  # 使用捕获 Q 值作为有效束缚能
-            self.kappa = np.sqrt(2.0 * _sys.mu_t_th * be) / config.HBARC
+            # κ 由弹核内 α-t 团簇的分离能决定 (S_αt = 2.468 MeV)
+            be = abs(_sys.q_breakup)
+            self.kappa = np.sqrt(2.0 * _sys.mu_alpha_t * be) / config.HBARC
         else:
             self.kappa = kappa
         self.p0 = p0
@@ -131,8 +149,9 @@ class QWindowTunnelingModel(TransferModel):
                  gamma_q: float = None):
         super().__init__("Q-window Tunneling")
         if kappa is None:
-            be = abs(_sys.q_capture)
-            self.kappa = np.sqrt(2.0 * _sys.mu_t_th * be) / config.HBARC
+            # κ 由弹核内 α-t 团簇的分离能决定 (S_αt = 2.468 MeV)
+            be = abs(_sys.q_breakup)
+            self.kappa = np.sqrt(2.0 * _sys.mu_alpha_t * be) / config.HBARC
         else:
             self.kappa = kappa
 
@@ -167,20 +186,18 @@ class QWindowTunnelingModel(TransferModel):
         # 隧穿因子
         p_tunnel = np.exp(-2.0 * self.kappa * d)
 
-        # Q 值窗口
+        # 最优激发能 (库仑匹配): E*_opt = Q_total − Q_opt
         q_opt = self.q_opt(e_cm, d)
-        q_total = _sys.q_total
+        e_star_opt = _sys.q_total - q_opt
 
-        # 费米运动对 Q_eff 的修正
-        if 'k_vec' in kwargs and kwargs['k_vec'] is not None:
-            k_vec = kwargs['k_vec']
-            k_mag = k_vec[0]
-            e_fermi = config.HBARC**2 * k_mag**2 / (2.0 * _sys.cluster.mass_MeV)
-            q_eff = q_total + e_fermi
+        # 事件激发能: 由准自由 t-Th 相对动能给出 E* = Q_capture + E_rel
+        k_vec = kwargs.get('k_vec')
+        if k_vec is not None:
+            e_star = t_th_relative_energy(e_cm, k_vec[0], k_vec[1])[1]
         else:
-            q_eff = q_total
+            e_star = _sys.q_capture
 
-        p_q = np.exp(-(q_eff - q_opt)**2 / (2.0 * self.gamma_q**2))
+        p_q = np.exp(-(e_star - e_star_opt)**2 / (2.0 * self.gamma_q**2))
 
         return self.p0 * p_tunnel * p_q
 
@@ -312,22 +329,67 @@ class SemiclassicalTransferModel(TransferModel):
 # ============================================================
 
 class FermiIntegratedModel(TransferModel):
-    """完整模型: 费米动量抽样 + 隧穿 + Q 窗口 + 后加速
+    """完整模型: 费米动量抽样 + t-Th 俘获 + 几何截断
 
-    这是用于最终计算的推荐模型。
+    物理图像:
+      - 7Li 到达核表面 (入射道 Hill-Wheeler × 擦边几何截断)
+      - 7Li 破裂, t 以相对动能 E_rel(t-Th) 接近 ²³²Th
+      - t 被 Th 俘获的概率 = t-Th 势垒的 Hill-Wheeler 穿透 P_capture(E_rel)
+      - E_rel 由费米动量分布抽样决定 → 激发能 E* = Q_capture + E_rel 展宽
+
+    与 exp(−2κD) 隧穿模型不同: 绝对标度由 t-Th 俘获物理决定, 而非 α-t 束缚
+    尾在重离子表面的指数抑制 (后者在擦边处给出 ~1e-7, 使绝对截面失效)。
     """
 
     def __init__(self, kappa: float = None, gamma_q: float = None,
-                 use_numerov_wf: bool = False):
+                 use_numerov_wf: bool = False, f_icf: float = 0.25):
         super().__init__("Fermi-Integrated")
         if kappa is None:
-            be = abs(_sys.q_capture)
-            self.kappa = np.sqrt(2.0 * _sys.mu_t_th * be) / config.HBARC
+            be = abs(_sys.q_breakup)
+            self.kappa = np.sqrt(2.0 * _sys.mu_alpha_t * be) / config.HBARC
         else:
             self.kappa = kappa
 
         self.gamma_q = gamma_q if gamma_q is not None else 3.0
+        self.f_icf = f_icf
+        self.delta_b = None
         self._use_numerov = use_numerov_wf
+        # 势垒缓存 (7Li+Th 入射道, t+Th 俘获道)
+        self._rb = None
+        self._vb = None
+        self._hbar_omega = None
+        self._rb_tth = None
+        self._vb_tth = None
+        self._hw_tth = None
+
+    def _ensure_barriers(self):
+        """计算 7Li+Th 与 t+Th 两个势垒 (缓存)"""
+        if self._rb is not None:
+            return
+        from .potentials import total_potential, find_barrier, akyuz_winther_potential
+        r_grid = np.linspace(0.5, 30.0, 2000)
+
+        # 7Li+Th 入射道势垒
+        v_tot = total_potential(r_grid, 1.0,
+                                 _sys.proj.Z, _sys.proj.A,
+                                 _sys.targ.Z, _sys.targ.A,
+                                 _mod.v0_in, _mod.r0_in, _mod.a_in)
+        rb, vb, curv = find_barrier(r_grid, v_tot)
+        self._rb = rb
+        self._vb = vb
+        self._hbar_omega = config.HBARC * np.sqrt(max(abs(curv), 1e-6) / _sys.mu_proj_targ)
+
+        # t+Th 俘获道势垒 (Akyüz-Winther 估算 t-Th 核势)
+        v0_t, r0_t, a_t = akyuz_winther_potential(
+            _sys.cluster.A, _sys.targ.Z, _sys.targ.A, _sys.cluster.Z)
+        v_tth = total_potential(r_grid, 1.0,
+                                 _sys.cluster.Z, _sys.cluster.A,
+                                 _sys.targ.Z, _sys.targ.A,
+                                 v0_t, r0_t, a_t)
+        rb_t, vb_t, curv_t = find_barrier(r_grid, v_tth)
+        self._rb_tth = rb_t
+        self._vb_tth = vb_t
+        self._hw_tth = config.HBARC * np.sqrt(max(abs(curv_t), 1e-6) / _sys.mu_t_th)
 
     def probability(self, e_cm: float, b: float,
                      n_fermi_samples: int = 5000,
@@ -354,70 +416,73 @@ class FermiIntegratedModel(TransferModel):
         Returns
         -------
         p_avg : 平均转移概率
-        (可选) details : 包含 D, k 分布, Q_eff, E* 分布等
+        (可选) details : 包含 D, k 分布, E* 分布, 俘获概率等
         """
-        d = config.distance_of_closest_approach(
-            _sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm, b
-        )
+        self._ensure_barriers()
 
-        # 费米动量抽样
+        # 入射道几何截断 (与 ICF 相同口径: 融合 b_g)
+        if e_cm > self._vb:
+            b_g = self._rb * np.sqrt(1.0 - self._vb / e_cm)
+        else:
+            b_g = 0.0
+        b_g = max(b_g, 0.01)
+        if self.delta_b is None:
+            self.delta_b = _mod.a0 * 0.8
+        p_geo = 1.0 / (1.0 + np.exp((b - b_g) / self.delta_b))
+
+        # 入射道势垒穿透 (7Li+Th)
+        t_entrance = 1.0 / (1.0 + np.exp(2.0 * np.pi * (self._vb - e_cm) / self._hbar_omega))
+
+        p_base = self.f_icf * t_entrance * p_geo
+
+        # n_fermi_samples <= 0: 仅几何概率 (供分波形状等快速调用)
+        if n_fermi_samples <= 0:
+            if return_details:
+                return p_base, {'d': b_g, 'probabilities': np.array([p_base]),
+                                'e_star': np.array([_sys.q_capture]),
+                                'q_eff': np.array([_sys.q_capture]), 'q_opt': 0.0}
+            return p_base
+
+        # 费米动量抽样 → 每事件 t-Th 俘获概率
         k_mag, k_theta, k_phi = self.fermi_sampler.sample(n_fermi_samples)
 
-        # 对每个费米动量配置计算转移概率
         probabilities = np.zeros(n_fermi_samples)
         e_star_values = np.zeros(n_fermi_samples)
         q_eff_values = np.zeros(n_fermi_samples)
 
         for i in range(n_fermi_samples):
-            # 费米动能
-            e_fermi = config.HBARC**2 * k_mag[i]**2 / (2.0 * _sys.cluster.mass_MeV)
-
-            # t 在 ⁷Li 内的方向余弦
-            cos_theta_k = np.cos(k_theta[i])
-
-            # 有效 Q 值 (含费米运动)
-            q_eff = _sys.q_total + e_fermi
-
-            # 隧穿因子 (D 被费米动量方向修正)
-            # t 沿束流方向(cos_θ>0) → 有效距离更近 → 隧穿更大
-            d_eff = d / (1.0 + 0.1 * cos_theta_k)  # 简单几何修正
-            p_tunnel = np.exp(-2.0 * self.kappa * d_eff)
-
-            # Q 窗口
-            z_spec, z_prod = _sys.spectator.Z, _sys.product.Z
-            z_proj, z_targ = _sys.proj.Z, _sys.targ.Z
-            ratio = (z_spec * z_prod) / (z_proj * z_targ)
-            q_opt = (ratio - 1.0) * e_cm
-            p_q = np.exp(-(q_eff - q_opt)**2 / (2.0 * self.gamma_q**2))
-
-            # t + ²³²Th 相对动能 → 激发 ²³⁵Pa
-            # E* = Q_capture + E_rel(t-Th)
-            v_cm = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
-            v_t_in_li = config.HBARC * k_mag[i] / _sys.cluster.mass_MeV
-
-            # t 在 CM 系的速度 (简化的1D投影)
-            v_t_cm_sq = (v_cm + v_t_in_li * cos_theta_k)**2 + \
-                        (v_t_in_li * np.sin(k_theta[i]))**2
-            e_rel_t_th = 0.5 * _sys.mu_t_th * v_t_cm_sq
-            e_star = _sys.q_capture + e_rel_t_th
-
-            probabilities[i] = p_tunnel * p_q
+            e_rel, e_star = t_th_relative_energy(e_cm, k_mag[i], k_theta[i])
             e_star_values[i] = max(e_star, 0.0)
-            q_eff_values[i] = q_eff
+            q_eff_values[i] = e_star
+
+            # t-Th 俘获: E_rel 高于 t-Th 势垒 → 俘获概率趋近 1
+            p_cap = 1.0 / (1.0 + np.exp(2.0 * np.pi *
+                                         (self._vb_tth - e_rel) / self._hw_tth))
+            probabilities[i] = p_base * p_cap
 
         p_avg = np.mean(probabilities)
 
         if return_details:
             return p_avg, {
-                'd': d,
+                'd': b_g,
                 'k_mag': k_mag,
                 'k_theta': k_theta,
+                'k_phi': k_phi,
                 'probabilities': probabilities,
                 'e_star': e_star_values,
                 'q_eff': q_eff_values,
-                'q_opt': (ratio - 1.0) * e_cm,
+                'q_opt': 0.0,
+                'e_star_opt': self._vb_tth,
+                'vb_tth': self._vb_tth,
             }
         return p_avg
+
+    def event_distribution(self, e_cm: float, b: float, n_samples: int):
+        """复用向量化费米积分路径 (概率已含 t-Th 俘获加权)"""
+        _, details = self.probability(e_cm, b, n_fermi_samples=n_samples,
+                                      return_details=True)
+        return (np.asarray(details['k_mag']), np.asarray(details['k_theta']),
+                np.asarray(details['probabilities']), np.asarray(details['e_star']))
 
     def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
         from .kinematics import impact_parameter_from_angle
@@ -523,17 +588,9 @@ class ICFFractionModel(TransferModel):
         q_eff_values = np.zeros(n_fermi_samples)
 
         for i in range(n_fermi_samples):
-            e_fermi = config.HBARC**2 * k_mag[i]**2 / (2.0 * _sys.cluster.mass_MeV)
-            cos_theta_k = np.cos(k_theta[i])
-
-            v_cm = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
-            v_t_in_li = config.HBARC * k_mag[i] / _sys.cluster.mass_MeV
-
-            v_t_cm_sq = (v_cm + v_t_in_li * cos_theta_k)**2 + \
-                        (v_t_in_li * np.sin(k_theta[i]))**2
-            e_rel_t_th = 0.5 * _sys.mu_t_th * v_t_cm_sq
-            e_star_values[i] = max(_sys.q_capture + e_rel_t_th, 0.0)
-            q_eff_values[i] = _sys.q_total + e_fermi
+            e_rel, e_star = t_th_relative_energy(e_cm, k_mag[i], k_theta[i])
+            e_star_values[i] = max(e_star, 0.0)
+            q_eff_values[i] = e_star
 
         if return_details:
             return p_base, {
@@ -542,12 +599,20 @@ class ICFFractionModel(TransferModel):
                 'b_g': b_g,
                 'k_mag': k_mag,
                 'k_theta': k_theta,
+                'k_phi': k_phi,
                 'probabilities': np.full(n_fermi_samples, p_base),
                 'e_star': e_star_values,
                 'q_eff': q_eff_values,
                 'q_opt': 0.0,
             }
         return p_base
+
+    def event_distribution(self, e_cm: float, b: float, n_samples: int):
+        """复用向量化费米路径 (E* 谱, 概率与 k 无关 = p_base)"""
+        _, details = self.probability(e_cm, b, n_fermi_samples=n_samples,
+                                      return_details=True)
+        return (np.asarray(details['k_mag']), np.asarray(details['k_theta']),
+                np.asarray(details['probabilities']), np.asarray(details['e_star']))
 
     def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
         from .kinematics import impact_parameter_from_angle

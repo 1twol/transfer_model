@@ -333,6 +333,8 @@ def generate_eexcn_table(exc_result: Dict,
     lines.append("# EEXCN table from transfer_model")
     lines.append("# For use with: python generate_pace.py --e-star <EEXCN>")
     lines.append("#")
+    lines.append("# NOTE: EEXCN_mean/std 来自模型 E* 谱 (E*=Q_capture+E_rel(t-Th), 含费米展宽),")
+    lines.append("#       与 .pace 文件口径一致; 不再是旧的 Q_opt 单值法。")
     lines.append(f"# {'E_lab':>6s}  {'E_cm':>8s}  {'EEXCN_mean':>10s}  "
                  f"{'EEXCN_std':>10s}  {'σ(mb)':>12s}  {'L_g':>5s}")
     lines.append("# " + "-" * 62)
@@ -347,7 +349,7 @@ def generate_eexcn_table(exc_result: Dict,
             eexcn_mean = e_star_specs[e_lab].get('e_star_mean', 0)
             eexcn_std = e_star_specs[e_lab].get('e_star_std', 0)
         else:
-            # 从 Q 值公式估算
+            # 从 Q 值公式估算 (仅当未提供 E* 谱时的回退)
             ratio = (_sys.spectator.Z * _sys.product.Z) / (_sys.proj.Z * _sys.targ.Z)
             q_opt = (ratio - 1.0) * e_cm
             eexcn_mean = _sys.q_total - q_opt

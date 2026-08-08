@@ -4,6 +4,7 @@ li7_th232_main.py — ⁷Li + ²³²Th 三体转移模型主程序
 
 反应:
   ⁷Li + ²³²Th → α + t + ²³²Th → α + ²³⁵Pa*
+                └── PACE4 蒸发一个中子 → ²³⁴Pa
 
 三体模型:
   - 初态: α-t 团簇 (束缚于 ⁷Li) + ²³²Th
@@ -14,7 +15,7 @@ li7_th232_main.py — ⁷Li + ²³²Th 三体转移模型主程序
   ✓ ⁷Li 内部费米动量分布 (高斯近似)
   ✓ 卢瑟福擦边轨道
   ✓ Hill-Wheeler 势垒穿透 + 经典角动量截断
-  ✓ 库仑后加速
+  ✓ 出口道两体能量守恒 (渐近动能含库仑后加速, T_rel = E_cm+Q₀−E*)
   ✓ 角度依赖
   ✓ 激发能谱 → PACE4 输入
 
@@ -62,8 +63,8 @@ _mod = config.model
 def print_system_info():
     """打印反应体系信息"""
     print("=" * 60)
-    print("  ⁷Li + ²³²Th 三体转移模型")
-    print("  Three-Body Transfer Model for ⁷Li + ²³²Th → α + ²³⁵Pa*")
+    print("  ⁷Li + ²³²Th 三体转移模型 (目标产物 ²³⁴Pa)")
+    print("  Three-Body Transfer Model: ⁷Li + ²³²Th → α + ²³⁵Pa* → ²³⁴Pa + n")
     print("=" * 60)
     print()
     print("  [核素]")
@@ -118,11 +119,17 @@ def print_kinematics_table(e_lab_range: np.ndarray):
 def generate_pace4_for_energies(model, e_lab_list, exc_result,
                                  output_dir, label_prefix, cascades, facla,
                                  n_fermi=5000, n_b=None, verbose=True):
-    """对多个能量点各生成 PACE4 文件 (含各自的 E* 谱)"""
+    """对多个能量点各生成 PACE4 文件 (含各自的 E* 谱)
+
+    Returns
+    -------
+    e_star_specs : {float(e_lab): spec} 每个能量的 E* 谱 (供 EEXCN 汇总表)
+    """
     if n_b is None:
         n_b = min(_mod.n_b, 40)
     n_fermi_es = max(n_fermi, 2000)
 
+    e_star_specs = {}
     for e_lab in e_lab_list:
         e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
 
@@ -133,6 +140,7 @@ def generate_pace4_for_energies(model, e_lab_list, exc_result,
         spec = compute_excitation_energy_spectrum(
             model, e_lab=e_lab, n_b=n_b, n_fermi=n_fermi_es, verbose=False
         )
+        e_star_specs[float(e_lab)] = spec
 
         # 输出目录
         pace_dir = os.path.join(output_dir, f"E={e_lab:.0f}MeV")
@@ -148,12 +156,14 @@ def generate_pace4_for_energies(model, e_lab_list, exc_result,
                   f"σ={meta['total_sigma_mb']:.4e} mb, "
                   f"{len(meta['files'])} files → {pace_dir}")
 
+    return e_star_specs
+
 
 # ============================================================
 # 主入口
 # ============================================================
 
-def main():
+def main(args=None):
     parser = argparse.ArgumentParser(
         description="⁷Li+²³²Th 三体转移模型",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -194,7 +204,8 @@ def main():
     parser.add_argument('--output-dir', type=str, default=None,
                         help='输出目录 (默认: ./output_<model>_<timestamp>)')
 
-    args = parser.parse_args()
+    if args is None:
+        args = parser.parse_args()
 
     # ---- 互斥检查 ----
     if args.e_lab is not None and args.all:
@@ -284,16 +295,20 @@ def main():
     if not args.no_pace4:
         print("\n  [PACE4 输入]")
 
+        # 各能量点的 E* 谱 (供 EEXCN 汇总表; 口径与 .pace 文件一致)
+        e_star_specs = {}
+
         if args.all:
             # 所有能量点各算 E* 谱 + PACE4
             print(f"  模式: --all ({len(e_lab_range)} 个能量点)")
-            generate_pace4_for_energies(
+            specs = generate_pace4_for_energies(
                 model, e_lab_range, exc,
                 output_dir=os.path.join(args.output_dir, "Li7+Th232_icf"),
                 label_prefix=f"Li7+Th232 {args.model}",
                 cascades=args.cascades, facla=args.facla,
                 n_fermi=args.n_fermi, verbose=True
             )
+            e_star_specs.update(specs)
 
         elif args.e_lab is not None:
             # 单能量
@@ -305,6 +320,7 @@ def main():
                 model, e_lab=e_lab, n_b=min(_mod.n_b, 40), n_fermi=max(args.n_fermi, 2000),
                 verbose=False
             )
+            e_star_specs[float(e_lab)] = spec_e
             pace_dir = os.path.join(args.output_dir, f"Li7+Th232_E={e_lab:.0f}MeV")
             meta = generate_pace4_from_spectrum(
                 spec_e, e_cm=e_cm, output_dir=pace_dir,
@@ -321,6 +337,8 @@ def main():
             e_cm_mid = config.e_lab_to_e_cm(e_mid, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
             print(f"  模式: 默认 (中位能量 E_lab={e_mid:.0f} MeV)")
 
+            if spec and spec.get('e_star') is not None:
+                e_star_specs[float(e_mid)] = spec
             pace_dir = os.path.join(args.output_dir, f"Li7+Th232_E={e_mid:.0f}MeV")
             meta = generate_pace4_from_spectrum(
                 spec, e_cm=e_cm_mid, output_dir=pace_dir,
@@ -330,16 +348,23 @@ def main():
             print(f"    {len(meta['files'])} files → {pace_dir}")
             print(f"    [spin dist: sharp-cutoff L_g, not CCFULL partial waves]")
 
-        # EEXCN 汇总表 (全能量)
+        # EEXCN 汇总表 (全能量; 未在上面的 PACE4 分支里算过 E* 谱的能量点, 补算)
+        for e_lab in exc['e_lab']:
+            el = float(e_lab)
+            if el not in e_star_specs:
+                e_star_specs[el] = compute_excitation_energy_spectrum(
+                    model, e_lab=el, n_b=min(_mod.n_b, 20),
+                    n_fermi=min(args.n_fermi, 3000), verbose=False
+                )
         eexcn_path = os.path.join(args.output_dir, "eexcn_table.txt")
-        generate_eexcn_table(exc, output_path=eexcn_path)
+        generate_eexcn_table(exc, e_star_specs, output_path=eexcn_path)
         print(f"    EEXCN 表: {eexcn_path}")
 
     # ---- 保存原始结果 ----
     result_path = os.path.join(args.output_dir, "result_summary.txt")
     with open(result_path, 'w', encoding='utf-8') as f:
         f.write(f"# Three-Body Transfer Model Results\n")
-        f.write(f"# Reaction: ⁷Li + ²³²Th → α + ²³⁵Pa*\n")
+        f.write(f"# Reaction: ⁷Li + ²³²Th → α + ²³⁵Pa* → ²³⁴Pa + n\n")
         f.write(f"# Model: {args.model}\n")
         f.write(f"# Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"#\n")

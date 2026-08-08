@@ -132,15 +132,7 @@ def grazing_angle(e_cm: float, r_int: float = 0,
     eta = config.sommerfeld(z1, z2, mu, e_cm)
     k = config.wavenumber(mu, e_cm)
 
-    # = θ_g = 2 arcsin(1 / (1 + 2E_cm R_int / (Z₁Z₂e²)))
-    x = z1 * z2 * config.E2 / (2.0 * e_cm * r_int)
-    if x >= 1.0:
-        # 能量太低，全吸收
-        theta_g_cm = np.pi
-    else:
-        theta_g_cm = 2.0 * np.arcsin(x / (2.0 - x))  # 修正公式
-
-    # 更准确的公式
+    # quarter-point 公式: θ_g = 2 arctan(η/(k R_int))
     theta_g_cm = 2.0 * np.arctan(eta / (k * r_int))
 
     # 擦边角动量
@@ -217,65 +209,101 @@ def breakup_kinematics(e_cm: float, b: float,
                                   _sys.proj.Z, _sys.targ.Z,
                                   _sys.mu_proj_targ)
 
-    v_cm = config.HBARC * traj.k / _sys.mu_proj_targ   # ⁷Li-²³²Th 相对速度
+    # 入射道运动学
+    traj = rutherford_trajectory(e_cm, b,
+                                  _sys.proj.Z, _sys.targ.Z,
+                                  _sys.mu_proj_targ)
+
+    # v_rel: ⁷Li-²³²Th 相对速度 (c 单位), 靶核静止时即 ⁷Li 的实验室系速度
+    v_rel = config.HBARC * traj.k / _sys.mu_proj_targ
+    v_li = v_rel
 
     # ⁷Li 内部: α-t 相对动量
     k_mag, k_theta, k_phi = k_vec_cluster
-    k_cm = k_mag  # t 在 ⁷Li 质心中的动量
 
-    # t 在 ⁷Li 内部的速度
-    v_t_in_li = config.HBARC * k_cm / _sys.cluster.mass_MeV
-
-    # t 在总 CM 系中的速度
-    # v_t = v_cm + v_t_in_li (矢量叠加)
-    # 这里需要投影到三维:
-    v_li_x = v_cm  # ⁷Li 沿束流方向 (x)
-    v_li_y = 0.0
-    v_li_z = 0.0
+    # t 在 ⁷Li 内部的速度 (c 单位)
+    v_t_in_li = config.HBARC * k_mag / _sys.cluster.mass_MeV
 
     # t 在 ⁷Li 内的速度分量 (各向同性方向)
     v_t_li_x = v_t_in_li * np.cos(k_theta)
     v_t_li_y = v_t_in_li * np.sin(k_theta) * np.cos(k_phi)
     v_t_li_z = v_t_in_li * np.sin(k_theta) * np.sin(k_phi)
 
+    # t 在实验室系中的速度 (靶核静止, 用于计算 t+Th 相对动能)
+    v_t_lab_x = v_li + v_t_li_x
+    v_t_lab_y = v_t_li_y
+    v_t_lab_z = v_t_li_z
+    v_t_lab = np.sqrt(v_t_lab_x**2 + v_t_lab_y**2 + v_t_lab_z**2)
+
     # t 在总 CM 系中的速度
-    v_t_cm_x = v_li_x + v_t_li_x
-    v_t_cm_y = v_li_y + v_t_li_y
-    v_t_cm_z = v_li_z + v_t_li_z
+    v_t_cm_x = v_li + v_t_li_x
+    v_t_cm_y = v_t_li_y
+    v_t_cm_z = v_t_li_z
     v_t_cm = np.sqrt(v_t_cm_x**2 + v_t_cm_y**2 + v_t_cm_z**2)
 
-    # t + ²³²Th 的相对动能 (转移后的激发能来源)
-    e_rel_t_th = 0.5 * _sys.mu_t_th * v_t_cm**2
+    # t + ²³²Th 的相对动能 (靶核在实验室系静止)
+    e_rel_t_th = 0.5 * _sys.mu_t_th * v_t_lab**2
 
     # 转移后: t 与 ²³²Th 结合 → ²³⁵Pa*
     # ²³⁵Pa 的激发能 = Q_capture + E_rel(t-Th)
     e_star_pa = _sys.q_capture + e_rel_t_th
 
-    # α 在总 CM 系中的速度
-    v_alpha_cm_x = v_li_x - (_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_x
-    v_alpha_cm_y = -(_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_y
-    v_alpha_cm_z = -(_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_z
-    v_alpha_cm = np.sqrt(v_alpha_cm_x**2 + v_alpha_cm_y**2 + v_alpha_cm_z**2)
+    # α 在实验室系/总 CM 中的速度 (动量守恒: m_α v_α_in_li = -m_t v_t_in_li)
+    v_alpha_lab_x = v_li - (_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_x
+    v_alpha_lab_y = -(_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_y
+    v_alpha_lab_z = -(_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_z
+    v_alpha_lab = np.sqrt(v_alpha_lab_x**2 + v_alpha_lab_y**2 + v_alpha_lab_z**2)
 
     kin = {
         'trajectory': traj,
-        'v_cm': v_cm,
+        'v_rel': v_rel,
+        'v_li': v_li,
         'e_cm': e_cm,
         'b': b,
         # t 的运动学
+        'v_t_lab': v_t_lab,
+        'v_t_lab_vec': np.array([v_t_lab_x, v_t_lab_y, v_t_lab_z]),
         'v_t_cm': v_t_cm,
         'v_t_cm_vec': np.array([v_t_cm_x, v_t_cm_y, v_t_cm_z]),
         'e_rel_t_th': e_rel_t_th,
         'e_star_pa': e_star_pa,
         # α 的运动学
-        'v_alpha_cm': v_alpha_cm,
-        'v_alpha_cm_vec': np.array([v_alpha_cm_x, v_alpha_cm_y, v_alpha_cm_z]),
+        'v_alpha_lab': v_alpha_lab,
+        'v_alpha_lab_vec': np.array([v_alpha_lab_x, v_alpha_lab_y, v_alpha_lab_z]),
         # 出口道相对运动
-        'v_rel_alpha_pa': v_alpha_cm,  # 近似 (²³⁵Pa ~ 静止在 CM)
-        'e_rel_alpha_pa': 0.5 * _sys.mu_alpha_pa * v_alpha_cm**2,
+        'v_rel_alpha_pa': v_alpha_lab,  # 近似 (²³⁵Pa ~ 静止在实验室系)
+        'e_rel_alpha_pa': 0.5 * _sys.mu_alpha_pa * v_alpha_lab**2,
     }
 
     return kin
+
+
+def t_th_relative_energy(e_cm: float, k_mag: float, k_theta: float) -> Tuple[float, float]:
+    """t-²³²Th 准自由事件的相对动能与 ²³⁵Pa 激发能
+
+    E_rel = ½ μ_tTh |v_rel + v_t|², 其中
+      v_rel = √(2E_cm/μ_proj_targ) 是 ⁷Li-²³²Th 相对速度 (= 束流速度, 靶核静止)
+      v_t   = ħ·k/m_t 是 t 在 ⁷Li 内的费米速度
+
+    总质心系中 t 与 Th 的相对速度恰为 v_rel + v_t (Th 在总 CM 中反向运动,
+    伽利略变换下相对速度不变), 故实验室系与质心系结果一致。
+
+    Parameters
+    ----------
+    e_cm : 入射道质心系能量 (MeV)
+    k_mag : 费米动量大小 (fm⁻¹)
+    k_theta : 费米动量相对束流方向的角度 (弧度)
+
+    Returns
+    -------
+    e_rel : t-Th 相对动能 (MeV)
+    e_star : ²³⁵Pa 激发能 E* = Q_capture + E_rel (MeV)
+    """
+    v_rel = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
+    v_t = config.HBARC * k_mag / _sys.cluster.mass_MeV
+    v_rel_sq = (v_rel + v_t * np.cos(k_theta))**2 + (v_t * np.sin(k_theta))**2
+    e_rel = 0.5 * _sys.mu_t_th * v_rel_sq
+    return e_rel, _sys.q_capture + e_rel
 
 
 # ============================================================
@@ -286,7 +314,7 @@ def post_acceleration(r_transfer: float, e_initial: float,
                        z1: int = None, z2: int = None,
                        mu: float = None,
                        r_inf: float = 500.0) -> Tuple[float, float, float]:
-    """库仑后加速计算
+    """库仑后加速计算 (出口道分解工具)
 
     在转移点 r = r_transfer 处, α 和 ²³⁵Pa 的初始相对动能
     为 E_initial。在无穷远处, 相对动能增加了库仑排斥能:
@@ -295,6 +323,10 @@ def post_acceleration(r_transfer: float, e_initial: float,
 
     出射角由卢瑟福轨道决定:
       θ_out = 2 arctan(η_out / (k_out b_out))
+
+    注意: 主计算路径中 α-²³⁵Pa 的渐近动能由两体能量守恒给出
+    (T_rel(∞) = E_cm + Q_total − E*, 已含库仑后加速), 不需要调用本函数。
+    本函数用于单独分解转移点处的局域动能与库仑增益。
 
     Parameters
     ----------
@@ -353,47 +385,87 @@ def post_acceleration(r_transfer: float, e_initial: float,
 
 def cm_to_lab(theta_cm: float, e_cm: float,
                m_ejectile: float, m_recoil: float,
-               q_value: float = 0.0) -> Tuple[float, float]:
-    """质心系角度 → 实验室系
+               q_value: float = 0.0,
+               m_proj: float = None, m_targ: float = None) -> Tuple[float, float]:
+    """质心系角度 → 实验室系 (标准两体运动学)
 
-    Parameters
-    ----------
+    参数
+    ----
     theta_cm : 质心系角度 (弧度)
-    e_cm : 质心系能量 (MeV)
+    e_cm : 入射道质心系能量 (MeV)
     m_ejectile : 出射粒子质量 (MeV/c²)
     m_recoil : 反冲核质量 (MeV/c²)
     q_value : Q 值 (MeV)
+    m_proj, m_targ : 入射弹核/靶核质量; 未提供时使用 _sys 默认值
 
-    Returns
-    -------
+    返回
+    ----
     theta_lab : 实验室系角度 (弧度)
-    e_lab : 实验室系能量 (MeV)
+    e_lab : 实验室系动能 (MeV)
     """
+    if m_proj is None:
+        m_proj = _sys.proj.mass_MeV
+    if m_targ is None:
+        m_targ = _sys.targ.mass_MeV
+
     e_total = e_cm + q_value
     if e_total <= 0:
         return np.pi, 0.0
 
-    v_cm = np.sqrt(2.0 * e_cm / (m_ejectile + m_recoil))
-    u = np.sqrt(2.0 * e_total / m_ejectile)
+    # 质心系在实验室系中的速度 (靶核静止)
+    M_in = m_proj + m_targ
+    V = np.sqrt(2.0 * e_cm / M_in) * np.sqrt(m_proj / m_targ)
 
-    gamma = m_recoil / (m_ejectile + m_recoil)
-    tan_lab = np.sin(theta_cm) / (np.cos(theta_cm) + gamma * v_cm / u)
-    theta_lab = np.arctan(tan_lab)
+    # 出射粒子在质心系中的速度
+    M_out = m_ejectile + m_recoil
+    T_ej_cm = e_total * m_recoil / M_out
+    u = np.sqrt(2.0 * T_ej_cm / m_ejectile)
+
+    # 实验室系速度分量
+    denom = np.cos(theta_cm) + V / u
+    theta_lab = np.arctan2(np.sin(theta_cm), denom)
     if theta_lab < 0:
         theta_lab += np.pi
 
-    e_lab = 0.5 * m_ejectile * (u**2 + (gamma * v_cm)**2 +
-                                  2.0 * u * gamma * v_cm * np.cos(theta_cm))
+    e_lab = 0.5 * m_ejectile * (V**2 + u**2 +
+                                2.0 * V * u * np.cos(theta_cm))
 
     return theta_lab, e_lab
 
 
 def lab_to_cm(theta_lab: float, e_lab: float,
                m_ejectile: float, m_recoil: float,
-               q_value: float = 0.0) -> Tuple[float, float]:
-    """实验室系角度 → 质心系 (反变换)"""
-    # 简化: 对于 m_ej << m_rec 的情况
-    ratio = m_ejectile / m_recoil
-    theta_cm = theta_lab + np.arcsin(ratio * np.sin(theta_lab))
-    e_cm = e_lab * m_recoil / (m_ejectile + m_recoil)
+               q_value: float = 0.0,
+               m_proj: float = None, m_targ: float = None) -> Tuple[float, float]:
+    """实验室系角度 → 质心系 (近似反变换)
+
+    注: 严格反变换需要解非线性方程, 此处采用小质量比近似
+    (m_ej << m_rec), 对 α + 重核产物足够精确。
+    """
+    if m_proj is None:
+        m_proj = _sys.proj.mass_MeV
+    if m_targ is None:
+        m_targ = _sys.targ.mass_MeV
+
+    M_in = m_proj + m_targ
+    M_out = m_ejectile + m_recoil
+
+    # 先粗略估计 e_cm (忽略 V/u 项)
+    e_cm = e_lab * M_out / m_recoil - q_value
+    e_cm = max(e_cm, 0.01)
+
+    # 迭代一次使 lab 能量匹配
+    for _ in range(10):
+        V = np.sqrt(2.0 * e_cm / M_in) * np.sqrt(m_targ / m_proj)
+        T_ej_cm = (e_cm + q_value) * m_recoil / M_out
+        u = np.sqrt(2.0 * T_ej_cm / m_ejectile)
+        e_lab_calc = 0.5 * m_ejectile * (
+            V**2 + u**2 + 2.0 * V * u * np.cos(theta_lab))
+        # 用差分校正 e_cm
+        e_cm_new = e_cm * e_lab / max(e_lab_calc, 1e-6)
+        if abs(e_cm_new - e_cm) < 1e-4:
+            break
+        e_cm = e_cm_new
+
+    theta_cm = theta_lab
     return theta_cm, e_cm

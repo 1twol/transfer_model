@@ -100,11 +100,17 @@ python generate_pace.py partial.dat --e-star <value_from_table>
 
 | Model | CLI flag | Description |
 |-------|----------|-------------|
-| ICF fraction | `icf` *(default)* | Smooth Fermi-step at grazing angular momentum, scaled by f_ICF |
-| Fermi-integrated | `fermi` | Monte Carlo integration over ⁷Li internal momentum distribution + tunneling + Q-window |
-| Q-window tunneling | `qwindow` | Exponential tunneling with optimal Q-value matching |
-| Simple tunneling | `tunneling` | P ∝ exp(−2κD) with distance of closest approach |
-| Semiclassical DWBA | `dwba` | Stationary-phase approximation with zero-range form factor |
+| ICF fraction | `icf` *(default)* | Smooth Fermi-step at grazing angular momentum, scaled by f_ICF; Fermi MC only feeds the E* spectrum |
+| Fermi-integrated | `fermi` | Monte Carlo over ⁷Li internal momentum; per-event t–Th capture via Hill-Wheeler at E_rel(t–Th), times entrance barrier × geometric cutoff |
+| Q-window tunneling | `qwindow` | ⚠ *schematic* — exp(−2κD) × excitation-matching window; absolute scale uncalibrated |
+| Simple tunneling | `tunneling` | ⚠ *schematic* — P ∝ exp(−2κD); absolute scale uncalibrated |
+| Semiclassical DWBA | `dwba` | ⚠ *schematic* — stationary phase, zero-range; absolute scale uncalibrated |
+
+> All five models now produce a real excitation-energy distribution dσ/dE* and a
+> forward-peaked α angular distribution via the shared Fermi-momentum sampling.
+> The three ⚠ *schematic* models are for shape comparison only — their absolute σ
+> (P₀/D₀ uncalibrated, ~1e-5–0.3 mb) is not meaningful. In the interactive entry
+> they are hidden behind "other schematic models".
 
 ---
 
@@ -127,29 +133,40 @@ The initial state has three bodies: α, t (bound in ⁷Li), and ²³²Th. The t 
 ### Transfer probability
 
 ```
-P_tr(b, E) = ∫ d³k P(k) · P_tunnel(D_eff) · P_Q−window(Q_eff)
+P_tr(b, E) = ∫ d³k P(k) · P_tr(b, k)
 ```
 
-- **Tunneling**: P_tunnel = exp(−2κ D_eff), κ ∝ √(μ_BE)
-- **Q-value window**: P_Q = exp(−(Q_eff − Q_opt)² / 2Γ²)
-- **Optimal Q-value**: Q_opt = (Z_α·Z_Pa / Z_Li·Z_Th − 1) · E_cm
-- **ICF calibration** (default): P_tr(b) = f_ICF / (1 + exp((b − b_g)/Δb)), f_ICF ≈ 0.25
+Per-model ingredients:
+
+- **ICF calibration** (default): P_tr(b) = T(E_cm)·f_ICF / (1 + exp((b − b_g)/Δb)), f_ICF ≈ 0.25;
+  the Fermi MC only builds the E* spectrum (not the σ scale).
+- **Fermi-integrated** (`fermi`): P_tr(b, k) = T(E_cm)·f_ICF·p_geo(b)·P_capture(E_rel(t−Th)),
+  where P_capture = Hill–Wheeler transmission through the t–Th barrier evaluated at the
+  event's E_rel. Gives the same absolute scale as `icf` above barrier, with stronger
+  sub-barrier suppression (both entrance and t–Th barriers).
+- **Excitation matching window** (`qwindow`): P_Q = exp(−(E\*_event − E\*_opt)² / 2Γ²), with
+  E\*_event = Q_capture + E_rel(t−Th) and E\*_opt = Q₀ − Q_opt.
+- **Simple tunneling** (`tunneling`): P_tr = P₀·exp(−2κ D_eff), κ ∝ √(μ_BE) — schematic only.
+- **Optimal Q-value**: Q_opt = (Z_α·Z_Pa / Z_Li·Z_Th − 1) · E_cm.
 
 ### Exit channel
 
-After transfer, α and ²³⁵Pa\* separate under their mutual Coulomb repulsion:
+After transfer, α and ²³⁵Pa\* separate under their mutual Coulomb repulsion. The
+asymptotic α–Pa kinetic energy is fixed by two-body energy conservation
+(T_rel(∞) = E_cm + Q₀ − E\*), which already includes the Coulomb post-acceleration
+gain acquired as the fragments separate:
 
 ```
-E_α(∞) = E_α(transfer) + Z_α·Z_Pa·e² / D_transfer
 E*(²³⁵Pa) = Q_capture + E_rel(t−²³²Th at transfer)
+T_rel(∞)  = E_cm + Q₀ − E*
 ```
 
 ### Cross sections
 
 ```
-σ(E)      = 2π ∫ b db · P_tr(b, E)           excitation function
-dσ/dΩ(θ)  = (dσ/dΩ)_Ruth × P_tr(θ)            angular distribution
-dσ/dE*    = ∫ b db · dP(b)/dE*                excitation energy spectrum
+σ(E)       = 2π ∫ b db · P_tr(b, E)             excitation function
+dσ/dΩ_α    = Σ_events 2π·b·P_tr(b,k)·δ(θ_α−θ_α(b,k))   α angular distribution (PWIA spectator: θ_α from v_beam + α Fermi velocity)
+dσ/dE*     = ∫ b db · (per-sample P_tr-weighted E* histogram)   excitation energy spectrum
 ```
 
 ---

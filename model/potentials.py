@@ -135,7 +135,7 @@ def find_barrier(r_grid: np.ndarray, potential: np.ndarray) -> Tuple[float, floa
     -------
     rb : 势垒位置 (fm)
     vb : 势垒高度 (MeV)
-    curv : 曲率 ħω = ħ√(-V''/μ) (MeV)
+    curv : 曲率, -V''(R_b) (MeV/fm²); 由调用方按 ħω = √(curv/μ) 换算
     """
     # 找最大值位置
     idx_max = np.argmax(potential)
@@ -149,9 +149,8 @@ def find_barrier(r_grid: np.ndarray, potential: np.ndarray) -> Tuple[float, floa
     else:
         d2v = -1.0  # fallback
 
-    # 曲率 ħω = ħ √(-V''/μ)
-    # 这里返回势的二阶导数值本身
-    curv = np.sqrt(max(-d2v, 1e-6))
+    # 返回 -V''(R_b) (正值), 调用方用 ħω = ħ√(curv/μ) 计算曲率
+    curv = max(-d2v, 1e-6)
     return rb, vb, curv
 
 

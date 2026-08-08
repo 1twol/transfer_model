@@ -100,11 +100,15 @@ python generate_pace.py partial.dat --e-star <表中的 EEXCN 值>
 
 | 模型 | CLI 参数 | 说明 |
 |-------|----------|------|
-| ICF 占比校准 | `icf` *(默认)* | 擦边角动量处的平滑 Fermi 台阶，乘以 f_ICF |
-| 费米动量积分 | `fermi` | 对 ⁷Li 内部动量分布做蒙特卡洛积分 + 隧穿 + Q 窗口 |
-| Q 窗口隧穿 | `qwindow` | 含最优 Q 值匹配的指数隧穿 |
-| 简单隧穿 | `tunneling` | P ∝ exp(−2κD)，以最近接近距离为变量 |
-| 半经典 DWBA | `dwba` | 定态相位近似 + 零程形状因子 |
+| ICF 占比校准 | `icf` *(默认)* | 擦边角动量处的平滑 Fermi 台阶，乘以 f_ICF；费米 MC 只用于 E* 谱 |
+| 费米动量积分 | `fermi` | 对 ⁷Li 内部动量做蒙特卡洛；每事件 t–Th 俘获 = 该事件 E_rel 处 t-Th 势垒的 Hill-Wheeler 穿透 × 入射势垒 × 几何截断 |
+| Q 窗口隧穿 | `qwindow` | ⚠ *示意* — exp(−2κD) × 激发能匹配窗；绝对标度未标定 |
+| 简单隧穿 | `tunneling` | ⚠ *示意* — P ∝ exp(−2κD)；绝对标度未标定 |
+| 半经典 DWBA | `dwba` | ⚠ *示意* — 定态相位 + 零程；绝对标度未标定 |
+
+> 五个模型现在都通过统一的费米动量抽样给出真实的激发能分布 dσ/dE* 和前向峰 α 角分布。
+> 三个 ⚠ *示意* 模型只适合比较形状——其绝对 σ（P₀/D₀ 未标定，~1e-5–0.3 mb）不可信。
+> 交互入口中它们被放在"其他示意模型"二级选择里。
 
 ---
 
@@ -127,29 +131,37 @@ python generate_pace.py partial.dat --e-star <表中的 EEXCN 值>
 ### 转移概率
 
 ```
-P_tr(b, E) = ∫ d³k P(k) · P_tunnel(D_eff) · P_Q−window(Q_eff)
+P_tr(b, E) = ∫ d³k P(k) · P_tr(b, k)
 ```
 
-- **隧穿因子**：P_tunnel = exp(−2κ D_eff)，κ ∝ √(μ_BE)
-- **Q 值窗口**：P_Q = exp(−(Q_eff − Q_opt)² / 2Γ²)
+各模型组成：
+
+- **ICF 校准**（默认）：P_tr(b) = T(E_cm)·f_ICF / (1 + exp((b − b_g)/Δb))，f_ICF ≈ 0.25；
+  费米 MC 只用于构建 E* 谱（不进入 σ 标度）。
+- **费米积分**（`fermi`）：P_tr(b,k) = T(E_cm)·f_ICF·p_geo(b)·P_capture(E_rel(t−Th))，
+  其中 P_capture 是 t-Th 势垒在事件 E_rel 处的 Hill-Wheeler 穿透。垒上标度与 `icf` 一致，
+  垒下因双势垒（入射 + t-Th）抑制更强。
+- **激发能匹配窗口**（`qwindow`）：P_Q = exp(−(E\*_event − E\*_opt)² / 2Γ²)，其中
+  E\*_event = Q_capture + E_rel(t−Th)，E\*_opt = Q₀ − Q_opt。
+- **简单隧穿**（`tunneling`）：P_tr = P₀·exp(−2κ D_eff)，κ ∝ √(μ_BE)——仅为示意。
 - **最优 Q 值**：Q_opt = (Z_α·Z_Pa / Z_Li·Z_Th − 1) · E_cm
-- **ICF 校准**（默认）：P_tr(b) = f_ICF / (1 + exp((b − b_g)/Δb))，f_ICF ≈ 0.25
 
 ### 出口道
 
-转移后，α 与 ²³⁵Pa\* 在库仑排斥下飞离：
+转移后，α 与 ²³⁵Pa\* 在库仑排斥下飞离，渐近动能由两体能量守恒
+给出（T_rel(∞) = E_cm + Q₀ − E\*，已含库仑后加速的增益）：
 
 ```
-E_α(∞) = E_α(transfer) + Z_α·Z_Pa·e² / D_transfer
 E*(²³⁵Pa) = Q_capture + E_rel(t−²³²Th at transfer)
+T_rel(∞)  = E_cm + Q₀ − E*
 ```
 
 ### 截面计算
 
 ```
-σ(E)      = 2π ∫ b db · P_tr(b, E)           激发函数
-dσ/dΩ(θ)  = (dσ/dΩ)_Ruth × P_tr(θ)           角分布
-dσ/dE*    = ∫ b db · dP(b)/dE*                激发能谱
+σ(E)       = 2π ∫ b db · P_tr(b, E)           激发函数
+dσ/dΩ_α    = Σ 事件 2π·b·P_tr(b,k)·δ(θ_α−θ_α(b,k))   α 角分布 (PWIA 旁观者: θ_α 由 v_beam + α 费米速度)
+dσ/dE*     = ∫ b db · (按样本 P_tr 加权的 E* 直方图)   激发能谱
 ```
 
 ---

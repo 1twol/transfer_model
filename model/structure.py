@@ -237,16 +237,19 @@ def solve_bound_state(r_grid: np.ndarray, v0: float, r0_ws: float, a_ws: float,
                                               e_guess=target_e,
                                               n_nodes_target=n_nodes)
 
-        if n < n_nodes or e_found < target_e:
+        # 节点数不足 -> 势阱太浅, 需要增大 V0
+        if n < n_nodes:
             v0_low = v0_mid
-        elif n > n_nodes or e_found > target_e:
+        # 节点数过多 -> 势阱太深, 需要减小 V0
+        elif n > n_nodes:
             v0_high = v0_mid
         else:
             # 节点数对了, 根据能量微调
+            # e_found < target_e (更负) -> V0 偏大
             if e_found < target_e:
-                v0_low = v0_mid
-            else:
                 v0_high = v0_mid
+            else:
+                v0_low = v0_mid
 
         if v0_high - v0_low < v0_tol:
             break
@@ -367,12 +370,12 @@ class FermiMomentumSampler:
         Parameters
         ----------
         use_numerov : 是否用 Numerov 精确求解 (False 则用高斯近似)
-        l_val : α-t 相对轨道角动量 (None=尝试 ℓ=0 和 ℓ=1)
+        l_val : α-t 相对轨道角动量 (None=ℓ=1, p-wave; 7Li 基态)
         n_nodes : 径向节点数 (None=自动)
         """
         self.use_numerov = use_numerov
-        self.l_val = l_val if l_val is not None else 0  # 默认 s-wave
-        self.n_nodes = n_nodes if n_nodes is not None else 1
+        self.l_val = l_val if l_val is not None else 1  # 7Li 基态 alpha-t 为 p-wave (l=1)
+        self.n_nodes = n_nodes if n_nodes is not None else _mod.n_alpha_t
 
         self._pk_interpolator = None
         self._k_grid = None

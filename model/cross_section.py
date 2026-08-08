@@ -17,9 +17,7 @@ from typing import Tuple, Optional, Dict
 from scipy.integrate import simpson
 
 from . import config
-from .kinematics import (rutherford_trajectory, impact_parameter_from_angle,
-                          rutherford_trajectory, grazing_angular_momentum,
-                          post_acceleration)
+from .kinematics import grazing_angular_momentum
 from .transfer import TransferModel, FermiIntegratedModel, ICFFractionModel
 
 _sys = config.system
@@ -57,15 +55,6 @@ def make_b_grid(e_cm: float, n_b: int = None, b_max: float = None) -> np.ndarray
     # 合并, 跳过重复点
     b_grid = np.unique(np.concatenate([b_inner, b_outer]))
     return b_grid
-
-
-def make_theta_grid(e_cm: float, n_theta: int = None) -> np.ndarray:
-    """生成质心系角度网格"""
-    if n_theta is None:
-        n_theta = _mod.n_theta
-    theta_min = np.radians(_mod.theta_min_deg)
-    theta_max = np.radians(_mod.theta_max_deg)
-    return np.linspace(theta_min, theta_max, n_theta)
 
 
 # ============================================================
@@ -147,10 +136,13 @@ def compute_angular_distribution(model: TransferModel,
                                     n_theta: int = None,
                                     n_fermi: int = 5000,
                                     verbose: bool = True) -> Dict:
-    """计算角分布 dσ/dΩ(θ)
+    """计算 α 旁观者的角分布 dσ/dΩ(θ_α)
 
-    变换: dσ/dΩ = (dσ/dΩ)_Ruth × P_tr(θ)
-          = (b / sinθ) |db/dθ| × P_tr(θ)
+    旁观者 (PWIA) 运动学: α 的速度 = 束流速度 + α 在 ⁷Li 内的费米速度。
+    α 与 t 在 ⁷Li 静止系中动量守恒 (m_α v_α = −m_t v_t), 故每个费米事件
+    给出一个 α 出射角 θ_α, 按转移概率 P_tr(b,k) 加权累加进角 bin。
+
+    dσ/dΩ_α 归一化: Σ_θ dσ/dΩ·ΔΩ = σ_tr (总截面守恒)。
 
     Parameters
     ----------
@@ -164,54 +156,71 @@ def compute_angular_distribution(model: TransferModel,
     result : {'theta_cm', 'theta_lab', 'dsigma_domega', 'dsigma_domega_ruth'}
     """
     e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
-    theta_grid = make_theta_grid(e_cm, n_theta)
-    n_theta_actual = len(theta_grid)
+    if n_theta is None:
+        n_theta = _mod.n_theta
 
-    dsdo = np.zeros(n_theta_actual)
-    dsdo_ruth = np.zeros(n_theta_actual)
+    # α 出射角范围 [0, π] (朝后的 α 事件也计入)
+    theta_edges = np.linspace(0.0, np.pi, n_theta + 1)
+    theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
 
-    for i, theta in enumerate(theta_grid):
-        # 碰撞参数
-        b = impact_parameter_from_angle(theta, e_cm,
-                                         _sys.proj.Z, _sys.targ.Z,
-                                         _sys.mu_proj_targ)
+    # 束流速度 (= ⁷Li 实验室速度, 靶核静止)
+    v_beam = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
+    m_t = _sys.cluster.mass_MeV
+    m_alpha = _sys.spectator.mass_MeV
 
-        # 转移概率
-        if isinstance(model, (FermiIntegratedModel, ICFFractionModel)):
-            p_tr = model.probability(e_cm, b, n_fermi_samples=n_fermi)
-        else:
-            p_tr = model.probability(e_cm, b)
+    b_grid = make_b_grid(e_cm, min(_mod.n_b, 40))
+    # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重
+    b_w = np.zeros_like(b_grid)
+    b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
+    b_w[-1] = 0.5 * (b_grid[-1] - b_grid[-2])
+    b_w[1:-1] = 0.5 * (b_grid[2:] - b_grid[:-2])
 
-        # 卢瑟福截面 (作为参照)
-        eta = config.sommerfeld(_sys.proj.Z, _sys.targ.Z,
-                                 _sys.mu_proj_targ, e_cm)
-        k = config.wavenumber(_sys.mu_proj_targ, e_cm)
-        a = eta / k
-        sin_half = np.sin(theta / 2.0)
-        dsdo_ruth[i] = (a / (2.0 * k * sin_half**2))**2  # fm²/sr
-        dsdo_ruth[i] *= 10  # → mb/sr
+    all_theta = []
+    all_w = []
 
-        # 转移截面
-        dsdo[i] = dsdo_ruth[i] * p_tr
+    for j, b in enumerate(b_grid):
+        k_mag, k_theta, p, _ = model.event_distribution(e_cm, b, n_fermi)
+        p = np.asarray(p, dtype=float)
+        k_mag = np.asarray(k_mag, dtype=float)
+        k_theta = np.asarray(k_theta, dtype=float)
 
-        if verbose and (i % max(1, n_theta_actual // 5) == 0):
-            print(f"  θ={np.degrees(theta):.1f}°, b={b:.1f} fm, "
-                  f"P={p_tr:.4e}, dσ/dΩ={dsdo[i]:.4e} mb/sr")
+        # α 在 ⁷Li 内速度 (与 t 反向): v_α = −(m_t/m_α)·v_t
+        v_t = config.HBARC * k_mag / m_t
+        v_ax = v_beam - (m_t / m_alpha) * v_t * np.cos(k_theta)
+        v_aperp = (m_t / m_alpha) * v_t * np.sin(k_theta)
+        th_alpha = np.arctan2(v_aperp, v_ax)
 
-    # 实验室系角度
-    theta_lab = np.zeros(n_theta_actual)
-    for i, theta in enumerate(theta_grid):
-        from .kinematics import cm_to_lab
-        theta_lab[i], _ = cm_to_lab(theta, e_cm,
-                                      _sys.spectator.mass_MeV,
-                                      _sys.product.mass_MeV,
-                                      _sys.q_total)
+        # 每个样本的截面权重: b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb)
+        w = b_w[j] * 2.0 * np.pi * b * p / len(p)
 
+        all_theta.append(th_alpha)
+        all_w.append(w)
+
+        if verbose and (j % max(1, len(b_grid) // 4) == 0):
+            print(f"  b={b:.1f} fm, <P>={np.mean(p):.4e}")
+
+    theta_all = np.concatenate(all_theta)
+    w_all = np.concatenate(all_w)
+
+    # dσ/dΩ = (Σ bin 内权重 ×10) / ΔΩ,  ΔΩ = 2π sinθ Δθ
+    dsdo, _ = np.histogram(theta_all, bins=theta_edges, weights=w_all)
+    dtheta = theta_edges[1] - theta_edges[0]
+    domega = 2.0 * np.pi * np.sin(theta_centers) * dtheta
+    dsdo = dsdo * 10.0 / np.maximum(domega, 1e-10)  # → mb/sr
+
+    # 入射道卢瑟福截面 (参照曲线, 前向峰)
+    eta = config.sommerfeld(_sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm)
+    k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+    a = eta / k
+    sin_half = np.sin(theta_centers / 2.0)
+    dsdo_ruth = (a / (2.0 * k * sin_half**2))**2 * 10.0  # mb/sr
+
+    # 重靶反冲 → α 实验室角 ≈ 质心角
     return {
-        'theta_cm': theta_grid,
-        'theta_cm_deg': np.degrees(theta_grid),
-        'theta_lab': theta_lab,
-        'theta_lab_deg': np.degrees(theta_lab),
+        'theta_cm': theta_centers,
+        'theta_cm_deg': np.degrees(theta_centers),
+        'theta_lab': theta_centers,
+        'theta_lab_deg': np.degrees(theta_centers),
         'dsigma_domega': dsdo,
         'dsigma_domega_ruth': dsdo_ruth,
     }
@@ -251,42 +260,45 @@ def compute_excitation_energy_spectrum(model: TransferModel,
     e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
     b_grid = make_b_grid(e_cm, n_b)
 
-    # 激发能范围
+    # 激发能范围下限 (E* = Q_capture + E_rel ≥ Q_capture, 故下限安全)
     q_capture = _sys.q_capture
-    e_star_min = max(0, q_capture - 5.0)
-    e_star_max = q_capture + 25.0
-    e_star_edges = np.linspace(e_star_min, e_star_max, e_star_bins + 1)
-    e_star_centers = 0.5 * (e_star_edges[:-1] + e_star_edges[1:])
+    e_star_min = max(0.0, q_capture - 5.0)
 
-    # 累积谱
-    dsigma_de = np.zeros(e_star_bins)
+    # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重, 不能用普通求和
+    b_w = np.zeros_like(b_grid)
+    b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
+    b_w[-1] = 0.5 * (b_grid[-1] - b_grid[-2])
+    b_w[1:-1] = 0.5 * (b_grid[2:] - b_grid[:-2])
+
+    # 累积所有样本的 (E*, 截面权重); 权重按每个样本自身的 p_i 计
+    all_e_star = []
+    all_w = []
 
     for j, b in enumerate(b_grid):
-        if isinstance(model, (FermiIntegratedModel, ICFFractionModel)):
-            _, details = model.probability(
-                e_cm, b, n_fermi_samples=n_fermi, return_details=True
-            )
-            p_values = details['probabilities']
-            e_star_values = details['e_star']
-        else:
-            # 非费米模型: 用简单的Q值
-            p_values = np.array([model.probability(e_cm, b)])
-            e_star_values = np.array([q_capture])
+        _, _, p_values, e_star_values = model.event_distribution(e_cm, b, n_fermi)
+        p_values = np.asarray(p_values, dtype=float)
+        e_star_values = np.asarray(e_star_values, dtype=float)
 
-        # 加权: dσ/dE* ∝ b × P(b) × δ(E*)
-        weight = 2.0 * np.pi * b * np.mean(p_values)  # fm²
-
-        # 将概率分配到激发能 bins
-        hist, _ = np.histogram(e_star_values, bins=e_star_edges,
-                                weights=np.ones_like(e_star_values) * weight / len(e_star_values))
-        dsigma_de += hist
+        # 每个样本的截面权重: dσ/dE* ∝ b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb)
+        all_e_star.append(e_star_values)
+        all_w.append(b_w[j] * 2.0 * np.pi * b * p_values / len(p_values))
 
         if verbose and (j % max(1, n_b // 4) == 0):
             print(f"  b={b:.1f} fm, <P>={np.mean(p_values):.4e}")
 
-    # 单位转换: fm²/MeV → mb/MeV
-    dsigma_de *= 10
-    # bin宽度归一化
+    e_star_all = np.concatenate(all_e_star)
+    w_all = np.concatenate(all_w)
+
+    # 自适应 bin 上界: 覆盖全部采样到的 E* (不丢高能尾)
+    e_star_max = float(e_star_all.max())
+    if e_star_max - e_star_min < 1.0:
+        e_star_max = e_star_min + 25.0
+    e_star_edges = np.linspace(e_star_min, e_star_max, e_star_bins + 1)
+    e_star_centers = 0.5 * (e_star_edges[:-1] + e_star_edges[1:])
+
+    # 单位转换: fm² → mb (×10), bin 宽度归一化 → mb/MeV
+    dsigma_de, _ = np.histogram(e_star_all, bins=e_star_edges, weights=w_all)
+    dsigma_de *= 10.0
     de = e_star_edges[1] - e_star_edges[0]
     dsigma_de /= de
 

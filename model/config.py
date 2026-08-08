@@ -123,8 +123,8 @@ class ModelParams:
     v0_alpha_t: float = 74.5          # WS 势阱深度 (MeV)
     r0_alpha_t: float = 1.15          # 半径参数
     a_alpha_t: float = 0.70           # 弥散
-    n_alpha_t: int = 1                # 径向节点数 (n=1 for 2s state)
-    l_alpha_t: int = 0                # 轨道角动量 (ℓ=0, s-wave)
+    n_alpha_t: int = 0                # 径向节点数 (ℓ=1 p-wave 基态 n=0)
+    l_alpha_t: int = 1                # 轨道角动量 (ℓ=1, p-wave; 7Li alpha-t cluster)
 
     # --- t-²³²Th 束缚势 ---
     v0_t_th: float = -60.0            # 光学势实部深度 (MeV)
