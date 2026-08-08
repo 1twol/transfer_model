@@ -48,10 +48,12 @@ from model.transfer import (TunnelingModel, QWindowTunnelingModel,
 from model.cross_section import (compute_excitation_function,
                                     compute_angular_distribution,
                                     compute_excitation_energy_spectrum,
+                                    compute_alpha_double_differential,
                                     compute_full)
 from post_process import (generate_pace4_from_spectrum, generate_pace4_single,
                           generate_eexcn_table, plot_all,
-                          plot_e_star_spec_to_file, plot_e_star_spectra_map)
+                          plot_e_star_spec_to_file, plot_e_star_spectra_map,
+                          plot_alpha_double_diff)
 
 _sys = config.system
 _mod = config.model
@@ -156,6 +158,12 @@ def generate_pace4_for_energies(model, e_lab_list, exc_result,
         plot_e_star_spec_to_file(spec,
                                  os.path.join(pace_dir, "e_star_spectrum.png"),
                                  e_lab=e_lab)
+
+        # α 旁观者双微分热图 (THM 坐标系)
+        d2 = compute_alpha_double_differential(
+            model, e_lab=e_lab, n_b=n_b, n_fermi=n_fermi_es, verbose=False)
+        plot_alpha_double_diff(d2,
+                               os.path.join(pace_dir, "alpha_double_diff.png"))
 
         if verbose:
             print(f"    <E*>={spec['e_star_mean']:.1f} MeV, "

@@ -502,6 +502,43 @@ def plot_e_star_spectrum(result: Dict, output_path: str = None):
         plt.show()
 
 
+def plot_alpha_double_diff(result: Dict, output_path: str = None,
+                           label: str = ""):
+    """画 α 旁观者双微分截面热图 d²σ/dE_α dΩ_α (θ_α, E_α)
+
+    坐标系与 THM 实验图 (Cook et al. 2019) 一致: 横轴 θ_lab, 纵轴 E_α。
+    result 为 compute_alpha_double_differential 的返回。
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARNING] matplotlib 未安装, 跳过画图")
+        return
+
+    th = result['theta_alpha_deg']
+    ea = result['e_alpha']
+    d2s = result['d2sigma']
+
+    fig, ax = plt.subplots(1, 1, figsize=(9, 6))
+    logz = np.log10(np.maximum(d2s, 1e-30))
+    mesh = ax.pcolormesh(th, ea, logz, shading='auto', cmap='viridis')
+    cbar = fig.colorbar(mesh, ax=ax)
+    cbar.set_label("log10(d²σ/dE_α dΩ_α) [mb/sr/MeV]")
+
+    ax.set_xlabel("θ_α (deg)")
+    ax.set_ylabel("E_α (MeV)")
+    e_lab = result.get('e_lab')
+    ax.set_title(f"α spectator double-diff. E_lab={e_lab:.0f} MeV {label}".strip())
+    ax.grid(True, alpha=0.2)
+
+    plt.tight_layout()
+    if output_path:
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        print(f"  [plot] α 双微分热图 → {output_path}")
+    else:
+        plt.show()
+
+
 def plot_e_star_spec_to_file(spec: Dict, output_path: str,
                              e_lab: float = None):
     """把单个 E* 谱存为图片 (用于每个能量点目录下的独立谱图)"""
@@ -560,23 +597,24 @@ def plot_e_star_spectra_map(specs: Dict, output_path: str = None,
 
     fig, ax = plt.subplots(1, 1, figsize=(9, 6))
     logZ = np.log10(np.maximum(Z, 1e-30))
-    mesh = ax.pcolormesh(e_star_grid, np.array(energies), logZ,
+    # 横轴 E_lab, 纵轴 E* (交换)
+    mesh = ax.pcolormesh(np.array(energies), e_star_grid, logZ.T,
                          shading='auto', cmap='viridis')
     cbar = fig.colorbar(mesh, ax=ax)
     cbar.set_label("log10(dσ/dE*) [mb/MeV]")
 
-    # E*_opt(Q_opt) 曲线: 随 E_lab 变化的一条线
+    # E*_opt(Q_opt) 曲线: 随 E_lab 上升的一条线 (x=E_lab, y=E*_opt)
     e_opt_curve = []
     for e_lab in energies:
         e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
         e_opt_curve.append(_optimal_e_star(e_cm))
-    ax.plot(e_opt_curve, np.array(energies), '-', color='red', lw=2.5,
+    ax.plot(np.array(energies), e_opt_curve, '-', color='red', lw=2.5,
             label="E*_opt(Q_opt)")
 
     ax.axhline(_sys.q_capture, color='white', ls='--', lw=1, alpha=0.6)
 
-    ax.set_xlabel("E* (MeV)")
-    ax.set_ylabel("E_lab (MeV)")
+    ax.set_xlabel("E_lab (MeV)")
+    ax.set_ylabel("E* (MeV)")
     ax.legend(fontsize=9, loc='upper left')
     ax.set_title(f"Excitation Energy Spectra map {label}".strip())
     ax.grid(True, alpha=0.2)

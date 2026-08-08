@@ -226,6 +226,107 @@ def compute_angular_distribution(model: TransferModel,
     }
 
 
+def compute_alpha_double_differential(model: TransferModel,
+                                        e_lab: float,
+                                        n_b: int = None,
+                                        n_fermi: int = 5000,
+                                        n_theta: int = 80,
+                                        n_e_alpha: int = 80,
+                                        verbose: bool = False) -> Dict:
+    """α 旁观者双微分截面 d²σ/dE_α dΩ_α (θ_α, E_α)
+
+    每个费米事件给出 α 在实验室系的速度 (束流推进 + α 内部费米速度),
+    换算成 α 出射角 θ_α = arctan2(v_perp, v_axial) 和动能
+    E_α = ½ m_α v_α², 按转移概率 P_tr 加权 bin 到二维网格。
+
+    与 THM 实验图 (如 Cook et al. 2019) 坐标系一致: 横轴 θ_lab, 纵轴 E_α。
+
+    Parameters
+    ----------
+    model : 转移模型
+    e_lab : 实验室系能量 (MeV)
+    n_b, n_fermi : b 网格数、费米抽样数
+    n_theta, n_e_alpha : 二维网格点数
+
+    Returns
+    -------
+    result : {'theta_alpha', 'theta_alpha_deg', 'e_alpha', 'd2sigma', 'e_lab'}
+      theta_alpha : 角度网格中心 (rad)
+      e_alpha : α 动能网格中心 (MeV)
+      d2sigma : (n_e_alpha, n_theta) 数组, d²σ/dE dΩ (mb/sr/MeV)
+    """
+    if n_b is None:
+        n_b = min(_mod.n_b, 40)
+
+    e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+    b_grid = make_b_grid(e_cm, n_b)
+
+    # b 梯形求积权重
+    b_w = np.zeros_like(b_grid)
+    b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
+    b_w[-1] = 0.5 * (b_grid[-1] - b_grid[-2])
+    b_w[1:-1] = 0.5 * (b_grid[2:] - b_grid[:-2])
+
+    v_beam = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
+    m_t = _sys.cluster.mass_MeV
+    m_alpha = _sys.spectator.mass_MeV
+
+    all_th = []
+    all_e = []
+    all_w = []
+
+    for j, b in enumerate(b_grid):
+        k_mag, k_theta, p, _ = model.event_distribution(e_cm, b, n_fermi)
+        p = np.asarray(p, dtype=float)
+        k_mag = np.asarray(k_mag, dtype=float)
+        k_theta = np.asarray(k_theta, dtype=float)
+
+        # α 实验室速度: 束流推进 + α 内部速度 (与 t 反向)
+        v_t = config.HBARC * k_mag / m_t
+        v_ax = v_beam - (m_t / m_alpha) * v_t * np.cos(k_theta)
+        v_aperp = (m_t / m_alpha) * v_t * np.sin(k_theta)
+        th_alpha = np.arctan2(v_aperp, v_ax)
+        e_alpha = 0.5 * m_alpha * (v_ax**2 + v_aperp**2)
+
+        w = b_w[j] * 2.0 * np.pi * b * p / len(p)  # fm²
+        all_th.append(th_alpha)
+        all_e.append(e_alpha)
+        all_w.append(w)
+
+    th_all = np.concatenate(all_th)
+    e_all = np.concatenate(all_e)
+    w_all = np.concatenate(all_w)
+
+    # 二维网格
+    theta_edges = np.linspace(0.0, np.pi, n_theta + 1)
+    theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
+    e_lo = max(float(np.percentile(e_all, 0.5)), 0.0)
+    e_hi = float(np.percentile(e_all, 99.5))
+    if e_hi - e_lo < 1.0:
+        e_hi = e_lo + 30.0
+    e_edges = np.linspace(e_lo, e_hi, n_e_alpha + 1)
+    e_centers = 0.5 * (e_edges[:-1] + e_edges[1:])
+
+    d2sigma, _, _ = np.histogram2d(e_all, th_all, bins=[e_edges, theta_edges],
+                                   weights=w_all)
+    d2sigma *= 10.0  # fm² → mb
+
+    # 除以 ΔE·ΔΩ: ΔΩ = 2π sinθ Δθ
+    dtheta = theta_edges[1] - theta_edges[0]
+    domega = 2.0 * np.pi * np.sin(theta_centers) * dtheta
+    de = e_edges[1] - e_edges[0]
+    d2sigma = d2sigma / (de * domega[np.newaxis, :])
+
+    return {
+        'theta_alpha': theta_centers,
+        'theta_alpha_deg': np.degrees(theta_centers),
+        'e_alpha': e_centers,
+        'd2sigma': d2sigma,
+        'e_lab': e_lab,
+        'e_cm': e_cm,
+    }
+
+
 def compute_excitation_energy_spectrum(model: TransferModel,
                                          e_lab: float,
                                          n_b: int = None,
