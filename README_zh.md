@@ -57,6 +57,19 @@ python li7_th232_main.py --energy 20 45 5
 python li7_th232_main.py --no-plot --no-pace4
 ```
 
+### 交互式模式
+
+用逐项提问代替命令行参数，走同一条计算链路：
+
+```bash
+python interactive.py
+```
+
+依次询问：转移模型、快速测试、能量范围、PACE4 模式、费米动量抽样数、
+是否画图、输出目录——内部调用同一个 `li7_th232_main.main()`。
+推荐模型（icf、fermi）列在最前；示意模型（tunneling、qwindow、dwba）
+放在"其他示意模型"二级选择里，并提示其绝对标度未标定。
+
 ### 作为 Python 库使用
 
 ```python

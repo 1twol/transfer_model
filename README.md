@@ -57,6 +57,21 @@ python li7_th232_main.py --energy 20 45 5
 python li7_th232_main.py --no-plot --no-pace4
 ```
 
+### Interactive mode
+
+Step through the same computation with prompts (instead of CLI flags):
+
+```bash
+python interactive.py
+```
+
+It asks for: transfer model, quick-test mode, energy range, PACE4 mode,
+Fermi sampling count, plotting, and output directory — then calls the same
+`li7_th232_main.main()` under the hood. Recommended models (icf, fermi) are
+listed first; the schematic ones (tunneling, qwindow, dwba) are hidden behind
+"other schematic models" with a warning that their absolute scale is
+uncalibrated.
+
 ### As a library
 
 ```python
