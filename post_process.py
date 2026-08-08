@@ -457,19 +457,10 @@ def _optimal_e_star(e_cm: float) -> float:
     return _sys.q_total - q_opt
 
 
-def plot_e_star_spectrum(result: Dict, output_path: str = None):
-    """画激发能谱"""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("[WARNING] matplotlib 未安装, 跳过画图")
-        return
-
-    spec = result['e_star_spectrum']
-    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
-
+def _plot_e_star_spec(spec: Dict, ax, title: str = ""):
+    """在一张 ax 上画单条 E* 谱 (谱线 + Q_capture/<E*> 竖线 + E*_opt 竖线)"""
     ax.fill_between(spec['e_star'], 0, spec['dsigma_de'],
-                     color='C2', alpha=0.4)
+                    color='C2', alpha=0.4)
     ax.plot(spec['e_star'], spec['dsigma_de'], '-', color='C2', lw=2)
 
     ax.axvline(spec['q_capture'], color='gray', ls='--', lw=1,
@@ -486,9 +477,23 @@ def plot_e_star_spectrum(result: Dict, output_path: str = None):
     ax.set_xlabel("E* (MeV)")
     ax.set_ylabel("dσ/dE* (mb/MeV)")
     ax.legend(fontsize=9)
-    ax.set_title(f"Excitation Energy Spectrum of {_sys.product.symbol}*")
+    ax.set_title(title or f"Excitation Energy Spectrum of {_sys.product.symbol}*")
     ax.grid(True, alpha=0.3)
 
+
+def plot_e_star_spectrum(result: Dict, output_path: str = None):
+    """画激发能谱 (中位能量, 由 result['e_star_spectrum'] 提供)"""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARNING] matplotlib 未安装, 跳过画图")
+        return
+
+    spec = result['e_star_spectrum']
+    if spec is None:
+        return
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    _plot_e_star_spec(spec, ax)
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
@@ -497,11 +502,37 @@ def plot_e_star_spectrum(result: Dict, output_path: str = None):
         plt.show()
 
 
-def plot_e_star_spectra_multi(result: Dict, output_path: str = None,
-                               label: str = ""):
-    """把所有能量点的 E* 谱叠加画在一张图上
+def plot_e_star_spec_to_file(spec: Dict, output_path: str,
+                             e_lab: float = None):
+    """把单个 E* 谱存为图片 (用于每个能量点目录下的独立谱图)"""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARNING] matplotlib 未安装, 跳过画图")
+        return
 
-    需要 result['e_star_spectra'] = {E_lab: spec} (由 compute_full all_spectra=True 生成)。
+    if spec is None:
+        return
+    e_lab_ = spec.get('e_lab', e_lab)
+    title = f"E* spectrum, E_lab={e_lab_:.0f} MeV"
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    _plot_e_star_spec(spec, ax, title=title)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  [plot] E* 谱图 → {output_path}")
+
+
+def plot_e_star_spectra_map(specs: Dict, output_path: str = None,
+                            label: str = ""):
+    """二维"频谱图": 横轴 E*, 纵轴 E_lab, 颜色 = log10(dσ/dE*)
+
+    每个能量点的 dσ/dE* 插值到统一 E* 网格; 叠加库仑匹配最优激发能
+    E*_opt(Q_opt) 曲线 (随 E_lab 变化的一条线)。
+
+    Parameters
+    ----------
+    specs : {float(E_lab): spec} 由 compute_full all_spectra=True 生成
     """
     try:
         import matplotlib.pyplot as plt
@@ -509,44 +540,51 @@ def plot_e_star_spectra_multi(result: Dict, output_path: str = None,
         print("[WARNING] matplotlib 未安装, 跳过画图")
         return
 
-    specs = result.get('e_star_spectra')
     if not specs:
-        print("[WARNING] 没有多能量谱 (e_star_spectra), 跳过叠加图")
+        print("[WARNING] 没有多能量谱 (e_star_spectra), 跳过频谱图")
         return
 
-    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-    cmap = plt.get_cmap('viridis')
     energies = sorted(specs.keys())
-    opt_vals = []
+    # 统一 E* 网格 (覆盖所有能量)
+    e_lo = min(spec['e_star'].min() for spec in specs.values())
+    e_hi = max(spec['e_star'].max() for spec in specs.values())
+    e_star_grid = np.linspace(e_lo, e_hi, 300)
+
+    # 构建 2D 数组 [E_lab, E*]
+    Z = np.zeros((len(energies), len(e_star_grid)))
     for i, e_lab in enumerate(energies):
         spec = specs[e_lab]
-        color = cmap(i / max(len(energies) - 1, 1))
-        ax.plot(spec['e_star'], spec['dsigma_de'], '-', color=color, lw=1.5,
-                label=f"E_lab={e_lab:.0f} MeV")
-        ax.fill_between(spec['e_star'], 0, spec['dsigma_de'],
-                        color=color, alpha=0.08)
-        # 每条谱对应的库仑匹配最优激发能 (同色点线)
-        if 'e_cm' in spec:
-            e_opt = _optimal_e_star(spec['e_cm'])
-            opt_vals.append(e_opt)
-            ax.axvline(e_opt, color=color, ls=':', lw=1.2, alpha=0.8)
+        dsde = np.interp(e_star_grid, spec['e_star'], spec['dsigma_de'],
+                         left=0.0, right=0.0)
+        Z[i] = dsde
 
-    ax.axvline(_sys.q_capture, color='gray', ls='--', lw=1,
-               label=f"Q_capture={_sys.q_capture:.1f} MeV")
-    if opt_vals:
-        ax.plot([], [], color='k', ls=':', lw=1.2,
-                label="E*_opt(Q_opt), Coulomb matching")
+    fig, ax = plt.subplots(1, 1, figsize=(9, 6))
+    logZ = np.log10(np.maximum(Z, 1e-30))
+    mesh = ax.pcolormesh(e_star_grid, np.array(energies), logZ,
+                         shading='auto', cmap='viridis')
+    cbar = fig.colorbar(mesh, ax=ax)
+    cbar.set_label("log10(dσ/dE*) [mb/MeV]")
+
+    # E*_opt(Q_opt) 曲线: 随 E_lab 变化的一条线
+    e_opt_curve = []
+    for e_lab in energies:
+        e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+        e_opt_curve.append(_optimal_e_star(e_cm))
+    ax.plot(e_opt_curve, np.array(energies), '-', color='red', lw=2.5,
+            label="E*_opt(Q_opt)")
+
+    ax.axhline(_sys.q_capture, color='white', ls='--', lw=1, alpha=0.6)
 
     ax.set_xlabel("E* (MeV)")
-    ax.set_ylabel("dσ/dE* (mb/MeV)")
-    ax.legend(fontsize=8, ncol=2)
-    ax.set_title(f"Excitation Energy Spectra vs E_lab {label}".strip())
-    ax.grid(True, alpha=0.3)
+    ax.set_ylabel("E_lab (MeV)")
+    ax.legend(fontsize=9, loc='upper left')
+    ax.set_title(f"Excitation Energy Spectra map {label}".strip())
+    ax.grid(True, alpha=0.2)
 
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
-        print(f"  [plot] 多能量 E* 谱叠加图 → {output_path}")
+        print(f"  [plot] 频谱图 → {output_path}")
     else:
         plt.show()
 
@@ -560,7 +598,7 @@ def plot_all(result: Dict, output_dir: str = "."):
                                os.path.join(output_dir, "angular_distribution.png"))
     plot_e_star_spectrum(result,
                            os.path.join(output_dir, "e_star_spectrum.png"))
-    # 若有多能量谱, 额外画叠加图
-    if 'e_star_spectra' in result:
-        plot_e_star_spectra_multi(result,
-                                  os.path.join(output_dir, "e_star_spectra_all.png"))
+    # 若有多能量谱, 额外画二维频谱图 (含 E*_opt 曲线)
+    if result.get('e_star_spectra'):
+        plot_e_star_spectra_map(result['e_star_spectra'],
+                                os.path.join(output_dir, "e_star_spectra_map.png"))

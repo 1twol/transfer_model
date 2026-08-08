@@ -50,7 +50,8 @@ from model.cross_section import (compute_excitation_function,
                                     compute_excitation_energy_spectrum,
                                     compute_full)
 from post_process import (generate_pace4_from_spectrum, generate_pace4_single,
-                          generate_eexcn_table, plot_all)
+                          generate_eexcn_table, plot_all,
+                          plot_e_star_spec_to_file, plot_e_star_spectra_map)
 
 _sys = config.system
 _mod = config.model
@@ -151,10 +152,19 @@ def generate_pace4_for_energies(model, e_lab_list, exc_result,
             cascades=cascades, facla=facla, model=model
         )
 
+        # 每个能量点的 E* 谱图放进对应目录
+        plot_e_star_spec_to_file(spec,
+                                 os.path.join(pace_dir, "e_star_spectrum.png"),
+                                 e_lab=e_lab)
+
         if verbose:
             print(f"    <E*>={spec['e_star_mean']:.1f} MeV, "
                   f"σ={meta['total_sigma_mb']:.4e} mb, "
                   f"{len(meta['files'])} files → {pace_dir}")
+
+    # 全部能量算完后, 画二维频谱图 (含 E*_opt 曲线)
+    plot_e_star_spectra_map(e_star_specs,
+                            os.path.join(output_dir, "e_star_spectra_map.png"))
 
     return e_star_specs
 
