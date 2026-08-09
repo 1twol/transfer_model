@@ -20,7 +20,7 @@ output_*/
 *.png
 *.pdf
 
-# Docs (不上传 git)
+# Docs 
 docs/
 
 # OS
