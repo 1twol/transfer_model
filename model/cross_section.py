@@ -60,17 +60,13 @@ def make_b_grid(e_cm: float, n_b: int = None, b_max: float = None) -> np.ndarray
 def _near_point_geometry(e_cm: float, b: float) -> Tuple[float, float]:
     """入射道卢瑟福轨道近点: 距离 D(b) 与近点方向角 φ_p (rad, 相对束流)
 
-    近点方向角 = (π − θ_in)/2 = arctan(b/a), 其中 θ_in = 2 arctan(a/b)
-    是入射道散射角, a = η/k 是卢瑟福半长轴。
+    近点始终在束流前方 (+x 轴, φ_p=0), 与 b 无关: 入射轨迹 r(θ)=p/(e·cosθ−1)
+    的近点 (r 最小) 在 θ=0 即 +x 方向。近点切向速度方向恒为 +y (对 b>0,
+    7Li 从 y=−b 入射绕行到束流前方)。
     """
-    eta = config.sommerfeld(config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm)
-    k = config.wavenumber(config.system.mu_proj_targ, e_cm)
-    a = eta / k
     d = config.distance_of_closest_approach(config.system.proj.Z, config.system.targ.Z,
                                             config.system.mu_proj_targ, e_cm, b)
-    # φ_p = arctan(b/a) = (π − θ_in)/2; b→0 正碰时近点在束流前方 (φ_p→0)
-    phi_p = np.arctan(b / max(a, 1e-9))
-    return d, phi_p
+    return d, 0.0
 
 
 def _alpha_b_min(e_cm: float) -> float:
@@ -101,14 +97,15 @@ def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta) -> Tuple[np.ndarray, 
     """
     d, phi_p = _near_point_geometry(e_cm, b)
     v_inf = np.sqrt(2.0 * e_cm / config.system.mu_proj_targ)
-    v_near = b * v_inf / max(d, 1e-9)  # 近点切向速度 (角动量守恒 L=μ b v_∞=μ D v_tan)
+    # 近点切向速度 v_near = b·v_∞/D (角动量守恒), 方向恒为 +y
+    v_near = b * v_inf / max(d, 1e-9)
     m_t = config.system.cluster.mass_MeV
     m_alpha = config.system.spectator.mass_MeV
 
     v_t = config.HBARC * np.asarray(k_mag, float) / m_t
-    # α 费米速度 (与 t 反向, 动量守恒 |p_α|=|p_t|=ħk)
-    v_ax = -v_near * np.sin(phi_p) - (m_t / m_alpha) * v_t * np.cos(np.asarray(k_theta, float))
-    v_aperp = v_near * np.cos(phi_p) - (m_t / m_alpha) * v_t * np.sin(np.asarray(k_theta, float))
+    # α 初始速度: 近点切向(+y) + 费米(与 t 反向, 各向同性)
+    v_ax = -(m_t / m_alpha) * v_t * np.cos(np.asarray(k_theta, float))
+    v_aperp = v_near + (m_t / m_alpha) * v_t * np.sin(np.asarray(k_theta, float))
 
     e_breakup = 0.5 * m_alpha * (v_ax**2 + v_aperp**2)
     theta_out, e_out = coulomb_recoil(d, phi_p, v_ax, v_aperp,
@@ -152,6 +149,12 @@ def compute_excitation_function(model: TransferModel,
     for i, e_lab in enumerate(e_lab_range):
         e_cm = config.e_lab_to_e_cm(e_lab, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
         b_grid = make_b_grid(e_cm)
+        # 与 α 双微分/角分布一致: 剔除近正碰 (近点进入核区, 融合吸收,
+        # 无旁观 α)。保证 σ(E) 与可测 α 截面归一化一致。
+        b_min = _alpha_b_min(e_cm)
+        b_grid = b_grid[b_grid >= b_min]
+        if len(b_grid) < 3:
+            b_grid = make_b_grid(e_cm)[1:]
         p_grid = np.zeros_like(b_grid)
 
         l_g = grazing_angular_momentum(e_cm,
