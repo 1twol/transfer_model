@@ -53,7 +53,8 @@ from model.cross_section import (compute_excitation_function,
 from post_process import (generate_pace4_from_spectrum, generate_pace4_single,
                           generate_eexcn_table, plot_all,
                           plot_e_star_spec_to_file, plot_e_star_spectra_map,
-                          plot_alpha_double_diff)
+                          plot_alpha_double_diff,
+                          plot_angular_distribution_to_file)
 
 _sys = config.system
 _mod = config.model
@@ -164,6 +165,13 @@ def generate_pace4_for_energies(model, e_lab_list, exc_result,
             model, e_lab=e_lab, n_b=n_b, n_fermi=n_fermi_es, verbose=False)
         plot_alpha_double_diff(d2,
                                os.path.join(pace_dir, "alpha_double_diff.png"))
+
+        # 每个能量点的角分布图 (与 E* 谱、双微分并列)
+        ang_ev = compute_angular_distribution(
+            model, e_lab=e_lab, n_theta=_mod.n_theta,
+            n_fermi=n_fermi_es, verbose=False)
+        plot_angular_distribution_to_file(
+            ang_ev, os.path.join(pace_dir, "angular_distribution.png"))
 
         if verbose:
             print(f"    <E*>={spec['e_star_mean']:.1f} MeV, "

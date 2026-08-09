@@ -280,6 +280,8 @@ def compute_angular_distribution(model: TransferModel,
         'theta_lab_deg': np.degrees(theta_centers),
         'dsigma_domega': dsdo,
         'dsigma_domega_ruth': dsdo_ruth,
+        'e_lab': e_lab,
+        'e_cm': e_cm,
     }
 
 

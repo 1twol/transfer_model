@@ -410,23 +410,16 @@ def plot_excitation_function(result: Dict, output_path: str = None,
         plt.show()
 
 
-def plot_angular_distribution(result: Dict, output_path: str = None):
-    """画角分布图"""
-    try:
-        import matplotlib.pyplot as plt
-    except ImportError:
-        print("[WARNING] matplotlib 未安装, 跳过画图")
-        return
-
-    ang = result['angular']
-    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
-
+def _plot_angular(ang: Dict, ax, title: str = "Angular Distribution"):
+    """在 ax 上画一条角分布 (transfer + Rutherford 参照)"""
     ax.plot(ang['theta_cm_deg'], ang['dsigma_domega'], 'o-', color='C0',
             lw=2, ms=5, label="dσ/dΩ (transfer)")
-    ax.plot(ang['theta_cm_deg'], ang['dsigma_domega_ruth'], '--',
-            color='gray', lw=1, alpha=0.7, label="dσ/dΩ (Rutherford)")
+    if 'dsigma_domega_ruth' in ang and ang['dsigma_domega_ruth'] is not None:
+        ax.plot(ang['theta_cm_deg'], ang['dsigma_domega_ruth'], '--',
+                color='gray', lw=1, alpha=0.7, label="dσ/dΩ (Rutherford)")
 
-    idx_peak = np.argmax(ang['dsigma_domega'])
+    ds = ang['dsigma_domega']
+    idx_peak = np.argmax(ds)
     theta_peak = ang['theta_cm_deg'][idx_peak]
     ax.axvline(theta_peak, color='red', ls=':', lw=1.5,
                label=f"Peak ≈ {theta_peak:.1f}°")
@@ -435,15 +428,50 @@ def plot_angular_distribution(result: Dict, output_path: str = None):
     ax.set_ylabel("dσ/dΩ (mb/sr)")
     ax.set_yscale('log')
     ax.legend(fontsize=9)
-    ax.set_title("Angular Distribution")
+    ax.set_title(title)
     ax.grid(True, alpha=0.3)
 
+
+def plot_angular_distribution(result: Dict, output_path: str = None):
+    """画角分布图 (中位能量, 由 result['angular'] 提供)"""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARNING] matplotlib 未安装, 跳过画图")
+        return
+
+    ang = result['angular']
+    if not ang:
+        return
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    _plot_angular(ang, ax)
     plt.tight_layout()
     if output_path:
         plt.savefig(output_path, dpi=150, bbox_inches='tight')
         print(f"  [plot] 角分布图 → {output_path}")
     else:
         plt.show()
+
+
+def plot_angular_distribution_to_file(ang: Dict, output_path: str,
+                                      e_lab: float = None):
+    """把单个能量点的角分布存为图片 (用于每个能量点目录下的独立角分布图)"""
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARNING] matplotlib 未安装, 跳过画图")
+        return
+
+    if not ang:
+        return
+    e_lab_ = ang.get('e_lab', e_lab)
+    title = f"α angular distribution, E_lab={e_lab_:.0f} MeV"
+    fig, ax = plt.subplots(1, 1, figsize=(8, 6))
+    _plot_angular(ang, ax, title=title)
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  [plot] 角分布图 → {output_path}")
 
 
 def _optimal_e_star(e_cm: float) -> float:
