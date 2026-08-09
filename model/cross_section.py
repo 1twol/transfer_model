@@ -17,7 +17,7 @@ from typing import Tuple, Optional, Dict
 from scipy.integrate import simpson
 
 from . import config
-from .kinematics import grazing_angular_momentum
+from .kinematics import grazing_angular_momentum, coulomb_recoil
 from .transfer import TransferModel, FermiIntegratedModel, ICFFractionModel
 
 _sys = config.system
@@ -55,6 +55,52 @@ def make_b_grid(e_cm: float, n_b: int = None, b_max: float = None) -> np.ndarray
     # 合并, 跳过重复点
     b_grid = np.unique(np.concatenate([b_inner, b_outer]))
     return b_grid
+
+
+def _near_point_geometry(e_cm: float, b: float) -> Tuple[float, float]:
+    """入射道卢瑟福轨道近点: 距离 D(b) 与近点方向角 φ_p (rad, 相对束流)
+
+    近点方向角 = (π − θ_in)/2 = arctan(b/a), 其中 θ_in = 2 arctan(a/b)
+    是入射道散射角, a = η/k 是卢瑟福半长轴。
+    """
+    eta = config.sommerfeld(_sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm)
+    k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+    a = eta / k
+    d = config.distance_of_closest_approach(_sys.proj.Z, _sys.targ.Z,
+                                            _sys.mu_proj_targ, e_cm, b)
+    # φ_p = arctan(b/a) = (π − θ_in)/2; b→0 正碰时近点在束流前方 (φ_p→0)
+    phi_p = np.arctan(b / max(a, 1e-9))
+    return d, phi_p
+
+
+def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """α 旁观者的初始速度 (近点切向推进 + 费米) 与库仑传播结果
+
+    α 在近点 (D, φ_p) 继承 ⁷Li 的近点切向速度 v_beam·t̂(φ_p), 叠加上
+    7Li 静止系内与 t 反向的费米速度, 再经 coulomb_recoil 传播到无穷远。
+
+    Returns
+    -------
+    (theta_out, e_out, e_breakup) :
+      theta_out : 渐近出射角 (rad, [0, π])
+      e_out : 无穷远 α 动能 (MeV)
+      e_breakup : 破裂点 α 动能 (MeV, 库仑增益前)
+    """
+    d, phi_p = _near_point_geometry(e_cm, b)
+    v_beam = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
+    m_t = _sys.cluster.mass_MeV
+    m_alpha = _sys.spectator.mass_MeV
+
+    # 近点切向方向 t̂ = (−sin φ_p, cos φ_p)
+    v_t = config.HBARC * np.asarray(k_mag, float) / m_t
+    # α 费米速度 (与 t 反向, 动量守恒 |p_α|=|p_t|=ħk)
+    v_ax = -v_beam * np.sin(phi_p) - (m_t / m_alpha) * v_t * np.cos(np.asarray(k_theta, float))
+    v_aperp = v_beam * np.cos(phi_p) - (m_t / m_alpha) * v_t * np.sin(np.asarray(k_theta, float))
+
+    e_breakup = 0.5 * m_alpha * (v_ax**2 + v_aperp**2)
+    theta_out, e_out = coulomb_recoil(d, phi_p, v_ax, v_aperp,
+                                      _sys.spectator.Z, _sys.product.Z, m_alpha)
+    return theta_out, e_out, e_breakup
 
 
 # ============================================================
@@ -138,9 +184,10 @@ def compute_angular_distribution(model: TransferModel,
                                     verbose: bool = True) -> Dict:
     """计算 α 旁观者的角分布 dσ/dΩ(θ_α)
 
-    旁观者 (PWIA) 运动学: α 的速度 = 束流速度 + α 在 ⁷Li 内的费米速度。
-    α 与 t 在 ⁷Li 静止系中动量守恒 (m_α v_α = −m_t v_t), 故每个费米事件
-    给出一个 α 出射角 θ_α, 按转移概率 P_tr(b,k) 加权累加进角 bin。
+    α 旁观者运动学 (含出口道库仑后加速):
+      每个费米事件, α 在 ⁷Li 破裂点 (近点) 继承 ⁷Li 的近点切向速度 +
+      内部费米速度 (与 t 反向), 然后在 ²³⁵Pa 库仑排斥场中传播到无穷远,
+      得到渐近出射角 θ_α。按转移概率 P_tr(b,k) 加权累加进角 bin。
 
     dσ/dΩ_α 归一化: Σ_θ dσ/dΩ·ΔΩ = σ_tr (总截面守恒)。
 
@@ -163,11 +210,6 @@ def compute_angular_distribution(model: TransferModel,
     theta_edges = np.linspace(0.0, np.pi, n_theta + 1)
     theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
 
-    # 束流速度 (= ⁷Li 实验室速度, 靶核静止)
-    v_beam = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
-    m_t = _sys.cluster.mass_MeV
-    m_alpha = _sys.spectator.mass_MeV
-
     b_grid = make_b_grid(e_cm, min(_mod.n_b, 40))
     # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重
     b_w = np.zeros_like(b_grid)
@@ -184,11 +226,8 @@ def compute_angular_distribution(model: TransferModel,
         k_mag = np.asarray(k_mag, dtype=float)
         k_theta = np.asarray(k_theta, dtype=float)
 
-        # α 在 ⁷Li 内速度 (与 t 反向): v_α = −(m_t/m_α)·v_t
-        v_t = config.HBARC * k_mag / m_t
-        v_ax = v_beam - (m_t / m_alpha) * v_t * np.cos(k_theta)
-        v_aperp = (m_t / m_alpha) * v_t * np.sin(k_theta)
-        th_alpha = np.arctan2(v_aperp, v_ax)
+        # α 旁观者运动学: 近点切向初速 + 库仑后传播 → 渐近出射角
+        th_alpha, _, _ = _alpha_velocity(e_cm, b, k_mag, k_theta)
 
         # 每个样本的截面权重: b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb)
         w = b_w[j] * 2.0 * np.pi * b * p / len(p)
@@ -235,9 +274,9 @@ def compute_alpha_double_differential(model: TransferModel,
                                         verbose: bool = False) -> Dict:
     """α 旁观者双微分截面 d²σ/dE_α dΩ_α (θ_α, E_α)
 
-    每个费米事件给出 α 在实验室系的速度 (束流推进 + α 内部费米速度),
-    换算成 α 出射角 θ_α = arctan2(v_perp, v_axial) 和动能
-    E_α = ½ m_α v_α², 按转移概率 P_tr 加权 bin 到二维网格。
+    每个费米事件: α 在近点继承 ⁷Li 近点切向速度 + 内部费米速度 (与 t 反向),
+    经 coulomb_recoil 在 ²³⁵Pa 库仑排斥场中传播到无穷远, 得到渐近出射角
+    θ_α 与动能 E_α (含库仑后加速增益)。按转移概率 P_tr 加权 bin 到二维网格。
 
     与 THM 实验图 (如 Cook et al. 2019) 坐标系一致: 横轴 θ_lab, 纵轴 E_α。
 
@@ -267,10 +306,6 @@ def compute_alpha_double_differential(model: TransferModel,
     b_w[-1] = 0.5 * (b_grid[-1] - b_grid[-2])
     b_w[1:-1] = 0.5 * (b_grid[2:] - b_grid[:-2])
 
-    v_beam = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
-    m_t = _sys.cluster.mass_MeV
-    m_alpha = _sys.spectator.mass_MeV
-
     all_th = []
     all_e = []
     all_w = []
@@ -281,12 +316,8 @@ def compute_alpha_double_differential(model: TransferModel,
         k_mag = np.asarray(k_mag, dtype=float)
         k_theta = np.asarray(k_theta, dtype=float)
 
-        # α 实验室速度: 束流推进 + α 内部速度 (与 t 反向)
-        v_t = config.HBARC * k_mag / m_t
-        v_ax = v_beam - (m_t / m_alpha) * v_t * np.cos(k_theta)
-        v_aperp = (m_t / m_alpha) * v_t * np.sin(k_theta)
-        th_alpha = np.arctan2(v_aperp, v_ax)
-        e_alpha = 0.5 * m_alpha * (v_ax**2 + v_aperp**2)
+        # α 旁观者运动学: 近点切向初速 + 库仑后传播 → 渐近出射角/能量
+        th_alpha, e_alpha, _ = _alpha_velocity(e_cm, b, k_mag, k_theta)
 
         w = b_w[j] * 2.0 * np.pi * b * p / len(p)  # fm²
         all_th.append(th_alpha)

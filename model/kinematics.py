@@ -310,6 +310,66 @@ def t_th_relative_energy(e_cm: float, k_mag: float, k_theta: float) -> Tuple[flo
 # 4. 库仑后加速 (出口道)
 # ============================================================
 
+def coulomb_recoil(r0, phi_p, vx, vy, z1: int, z2: int, m: float):
+    """α 旁观者的库仑排斥传播 (Pa 静止近似)
+
+    破裂点 (近点): α 从距离 r0、方向角 phi_p (相对束流) 处以实验室速度
+    (vx, vy) 出发, 在 ²³⁵Pa 库仑排斥场中运动到无穷远。解析求解排斥双曲
+    轨道, 返回渐近出射角与无穷远动能 (库仑增益 Z_αZ_Pa·e²/r0 已计入)。
+
+    近点处 ⁷Li 的速度方向是切向 (φ_p + π/2), 所以调用方应把初始速度
+    建为: v_beam·t̂(φ_p) + 费米项, 而不是 v_beam·x̂。
+
+    Parameters
+    ----------
+    r0, phi_p : 破裂距离 (fm) 与近点方向角 (rad, 相对束流)
+    vx, vy : α 初始速度 (c 单位, 实验室系, x=束流方向)
+    z1, z2 : α 与产物核电荷数
+    m : α 质量 (MeV/c²)
+
+    Returns
+    -------
+    theta_out : 渐近出射角 (rad, [0, π], 相对束流)
+    e_out : 无穷远动能 (MeV)
+    """
+    r0 = np.asarray(r0, float)
+    phi_p = np.asarray(phi_p, float)
+    vx = np.asarray(vx, float)
+    vy = np.asarray(vy, float)
+
+    C = z1 * z2 * config.E2
+    # 速度分解到径向 (phi_p 方向) / 切向
+    v_r = vx * np.cos(phi_p) + vy * np.sin(phi_p)
+    v_t = -vx * np.sin(phi_p) + vy * np.cos(phi_p)
+    E = 0.5 * m * (vx * vx + vy * vy) + C / np.maximum(r0, 1e-9)
+    L = m * r0 * v_t
+
+    theta_out = phi_p.copy()
+    e_out = E
+
+    L_abs = np.abs(L)
+    ok = L_abs > 1e-9
+    if not np.any(ok):
+        return theta_out, e_out
+
+    s = np.where(L > 0, 1.0, -1.0)
+    L2 = L * L
+    p = L2 / (m * C)
+    eps = np.sqrt(1.0 + 2.0 * E * L2 / (m * C * C))
+    cosA = np.clip((p / r0 + 1.0) / eps, -1.0, 1.0)
+    A = np.arccos(cosA)
+    # 近点角 φ_a 的符号由径向速度定: v_r>0 (向外) → φ_a<0
+    phi_a = np.where(v_r > 0, -A, A)
+    phi_a = np.where(v_r == 0, -A, phi_a)
+    dphi = np.arccos(np.clip(1.0 / eps, -1.0, 1.0))
+
+    th = phi_p + s * (phi_a + dphi)
+    th = np.mod(th, 2.0 * np.pi)
+    th = np.where(th > np.pi, 2.0 * np.pi - th, th)
+    theta_out = np.where(ok, th, theta_out)
+    return theta_out, e_out
+
+
 def post_acceleration(r_transfer: float, e_initial: float,
                        z1: int = None, z2: int = None,
                        mu: float = None,
