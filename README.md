@@ -180,7 +180,7 @@ T_rel(∞)  = E_cm + Q₀ − E*
 
 ```
 σ(E)       = 2π ∫ b db · P_tr(b, E)             excitation function
-dσ/dΩ_α    = Σ_events 2π·b·P_tr(b,k)·δ(θ_α−θ_α(b,k))   α angular distribution (spectator: α starts at near point with ⁷Li tangential velocity + Fermi, then Coulomb-propagates in the ²³⁵Pa field → asymptotic θ_α, E_α)
+dσ/dΩ_α    = Σ_events 2π·b·P_tr(b,k)·δ(θ_α−θ_α(b,k))   α angular distribution (spectator: α starts at the ⁷Li near point with the near-point tangential velocity v_near=b·v_∞/D + Fermi, then Coulomb-propagates in the ²³⁵Pa field → asymptotic θ_α, E_α; head-on b events whose near point falls inside the nucleus are excluded as they fuse and emit no spectator α)
 dσ/dE*     = ∫ b db · (per-sample P_tr-weighted E* histogram)   excitation energy spectrum
 ```
 

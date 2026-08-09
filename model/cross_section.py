@@ -73,10 +73,23 @@ def _near_point_geometry(e_cm: float, b: float) -> Tuple[float, float]:
     return d, phi_p
 
 
+def _alpha_b_min(e_cm: float) -> float:
+    """近正碰下界: 近点进入核区 (D(b) < R_int) 的 7Li 被完全融合吸收,
+    不产生可测的旁观者 α。解 D(b_min) = R_int:
+      a + √(a² + b²) = R_int  →  b_min = √(R_int² − 2aR_int),  a = η/k
+    """
+    r_int = config.interaction_radius(_sys.proj.A, _sys.targ.A, _mod.r0)
+    eta = config.sommerfeld(_sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm)
+    k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+    a = eta / k
+    return np.sqrt(max(r_int * r_int - 2.0 * a * r_int, 0.0))
+
+
 def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """α 旁观者的初始速度 (近点切向推进 + 费米) 与库仑传播结果
 
-    α 在近点 (D, φ_p) 继承 ⁷Li 的近点切向速度 v_beam·t̂(φ_p), 叠加上
+    α 在近点 (D, φ_p) 继承 ⁷Li 的近点切向速度 v_near = b·v_∞/D (角动量
+    守恒, 非渐近速度 v_∞——近点处 7Li 大部分动能已转为库仑势能), 叠加上
     7Li 静止系内与 t 反向的费米速度, 再经 coulomb_recoil 传播到无穷远。
 
     Returns
@@ -87,15 +100,15 @@ def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta) -> Tuple[np.ndarray, 
       e_breakup : 破裂点 α 动能 (MeV, 库仑增益前)
     """
     d, phi_p = _near_point_geometry(e_cm, b)
-    v_beam = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
+    v_inf = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
+    v_near = b * v_inf / max(d, 1e-9)  # 近点切向速度 (角动量守恒 L=μ b v_∞=μ D v_tan)
     m_t = _sys.cluster.mass_MeV
     m_alpha = _sys.spectator.mass_MeV
 
-    # 近点切向方向 t̂ = (−sin φ_p, cos φ_p)
     v_t = config.HBARC * np.asarray(k_mag, float) / m_t
     # α 费米速度 (与 t 反向, 动量守恒 |p_α|=|p_t|=ħk)
-    v_ax = -v_beam * np.sin(phi_p) - (m_t / m_alpha) * v_t * np.cos(np.asarray(k_theta, float))
-    v_aperp = v_beam * np.cos(phi_p) - (m_t / m_alpha) * v_t * np.sin(np.asarray(k_theta, float))
+    v_ax = -v_near * np.sin(phi_p) - (m_t / m_alpha) * v_t * np.cos(np.asarray(k_theta, float))
+    v_aperp = v_near * np.cos(phi_p) - (m_t / m_alpha) * v_t * np.sin(np.asarray(k_theta, float))
 
     e_breakup = 0.5 * m_alpha * (v_ax**2 + v_aperp**2)
     theta_out, e_out = coulomb_recoil(d, phi_p, v_ax, v_aperp,
@@ -211,6 +224,11 @@ def compute_angular_distribution(model: TransferModel,
     theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
 
     b_grid = make_b_grid(e_cm, min(_mod.n_b, 40))
+    # 剔除近正碰 (近点进入核区, 融合吸收, 无旁观 α)
+    b_min = _alpha_b_min(e_cm)
+    b_grid = b_grid[b_grid >= b_min]
+    if len(b_grid) < 3:
+        b_grid = make_b_grid(e_cm, min(_mod.n_b, 40))[1:]
     # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重
     b_w = np.zeros_like(b_grid)
     b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
@@ -299,6 +317,11 @@ def compute_alpha_double_differential(model: TransferModel,
 
     e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
     b_grid = make_b_grid(e_cm, n_b)
+    # 剔除近正碰 (近点进入核区, 融合吸收, 无旁观 α)
+    b_min = _alpha_b_min(e_cm)
+    b_grid = b_grid[b_grid >= b_min]
+    if len(b_grid) < 3:
+        b_grid = make_b_grid(e_cm, n_b)[1:]
 
     # b 梯形求积权重
     b_w = np.zeros_like(b_grid)
