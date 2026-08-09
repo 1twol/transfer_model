@@ -20,6 +20,9 @@ output_*/
 *.png
 *.pdf
 
+# Docs (不上传 git)
+docs/
+
 # OS
 .DS_Store
 Thumbs.db
