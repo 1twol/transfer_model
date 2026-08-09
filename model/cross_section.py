@@ -20,7 +20,7 @@ from . import config
 from .kinematics import grazing_angular_momentum, coulomb_recoil
 from .transfer import TransferModel, FermiIntegratedModel, ICFFractionModel
 
-_sys = config.system
+_sys = config.system          # 供模块内函数引用; 对比脚本可临时替换 config.system
 _mod = config.model
 
 
@@ -34,16 +34,16 @@ def make_b_grid(e_cm: float, n_b: int = None, b_max: float = None) -> np.ndarray
     策略: b 从 0 到 b_max, 在擦边角动量 L_g 附近加密
     """
     if n_b is None:
-        n_b = _mod.n_b
+        n_b = config.model.n_b
 
-    r_int = config.interaction_radius(_sys.proj.A, _sys.targ.A, _mod.r0)
+    r_int = config.interaction_radius(config.system.proj.A, config.system.targ.A, config.model.r0)
     l_g = grazing_angular_momentum(e_cm, r_int,
-                                    _sys.proj.Z, _sys.targ.Z)
-    k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+                                    config.system.proj.Z, config.system.targ.Z)
+    k = config.wavenumber(config.system.mu_proj_targ, e_cm)
     b_g = l_g / k if k > 0 else r_int
 
     if b_max is None or b_max <= 0:
-        b_max = max(2.0 * b_g, r_int * _mod.b_max_factor)
+        b_max = max(2.0 * b_g, r_int * config.model.b_max_factor)
 
     # 在擦边附近加密
     n_inner = int(n_b * 0.4)
@@ -63,11 +63,11 @@ def _near_point_geometry(e_cm: float, b: float) -> Tuple[float, float]:
     近点方向角 = (π − θ_in)/2 = arctan(b/a), 其中 θ_in = 2 arctan(a/b)
     是入射道散射角, a = η/k 是卢瑟福半长轴。
     """
-    eta = config.sommerfeld(_sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm)
-    k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+    eta = config.sommerfeld(config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm)
+    k = config.wavenumber(config.system.mu_proj_targ, e_cm)
     a = eta / k
-    d = config.distance_of_closest_approach(_sys.proj.Z, _sys.targ.Z,
-                                            _sys.mu_proj_targ, e_cm, b)
+    d = config.distance_of_closest_approach(config.system.proj.Z, config.system.targ.Z,
+                                            config.system.mu_proj_targ, e_cm, b)
     # φ_p = arctan(b/a) = (π − θ_in)/2; b→0 正碰时近点在束流前方 (φ_p→0)
     phi_p = np.arctan(b / max(a, 1e-9))
     return d, phi_p
@@ -78,9 +78,9 @@ def _alpha_b_min(e_cm: float) -> float:
     不产生可测的旁观者 α。解 D(b_min) = R_int:
       a + √(a² + b²) = R_int  →  b_min = √(R_int² − 2aR_int),  a = η/k
     """
-    r_int = config.interaction_radius(_sys.proj.A, _sys.targ.A, _mod.r0)
-    eta = config.sommerfeld(_sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm)
-    k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+    r_int = config.interaction_radius(config.system.proj.A, config.system.targ.A, config.model.r0)
+    eta = config.sommerfeld(config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm)
+    k = config.wavenumber(config.system.mu_proj_targ, e_cm)
     a = eta / k
     return np.sqrt(max(r_int * r_int - 2.0 * a * r_int, 0.0))
 
@@ -100,10 +100,10 @@ def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta) -> Tuple[np.ndarray, 
       e_breakup : 破裂点 α 动能 (MeV, 库仑增益前)
     """
     d, phi_p = _near_point_geometry(e_cm, b)
-    v_inf = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
+    v_inf = np.sqrt(2.0 * e_cm / config.system.mu_proj_targ)
     v_near = b * v_inf / max(d, 1e-9)  # 近点切向速度 (角动量守恒 L=μ b v_∞=μ D v_tan)
-    m_t = _sys.cluster.mass_MeV
-    m_alpha = _sys.spectator.mass_MeV
+    m_t = config.system.cluster.mass_MeV
+    m_alpha = config.system.spectator.mass_MeV
 
     v_t = config.HBARC * np.asarray(k_mag, float) / m_t
     # α 费米速度 (与 t 反向, 动量守恒 |p_α|=|p_t|=ħk)
@@ -112,7 +112,7 @@ def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta) -> Tuple[np.ndarray, 
 
     e_breakup = 0.5 * m_alpha * (v_ax**2 + v_aperp**2)
     theta_out, e_out = coulomb_recoil(d, phi_p, v_ax, v_aperp,
-                                      _sys.spectator.Z, _sys.product.Z, m_alpha)
+                                      config.system.spectator.Z, config.system.product.Z, m_alpha)
     return theta_out, e_out, e_breakup
 
 
@@ -140,9 +140,9 @@ def compute_excitation_function(model: TransferModel,
     result : {'e_lab', 'e_cm', 'sigma', 'sigma_rutherford', 'lg'}
     """
     if e_lab_range is None:
-        e_lab_range = np.arange(_mod.e_lab_min,
-                                 _mod.e_lab_max + _mod.e_lab_step / 2,
-                                 _mod.e_lab_step)
+        e_lab_range = np.arange(config.model.e_lab_min,
+                                 config.model.e_lab_max + config.model.e_lab_step / 2,
+                                 config.model.e_lab_step)
 
     n_energies = len(e_lab_range)
     sigma = np.zeros(n_energies)
@@ -150,14 +150,14 @@ def compute_excitation_function(model: TransferModel,
     l_g_values = np.zeros(n_energies)
 
     for i, e_lab in enumerate(e_lab_range):
-        e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+        e_cm = config.e_lab_to_e_cm(e_lab, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
         b_grid = make_b_grid(e_cm)
         p_grid = np.zeros_like(b_grid)
 
         l_g = grazing_angular_momentum(e_cm,
                                         config.interaction_radius(
-                                            _sys.proj.A, _sys.targ.A),
-                                        _sys.proj.Z, _sys.targ.Z)
+                                            config.system.proj.A, config.system.targ.A),
+                                        config.system.proj.Z, config.system.targ.Z)
         l_g_values[i] = l_g
 
         for j, b in enumerate(b_grid):
@@ -172,7 +172,7 @@ def compute_excitation_function(model: TransferModel,
         sigma[i] = simpson(integrand, b_grid) * 10  # → mb
 
         # 卢瑟福截面 (全融合上限: P=1 for b < b_g, P=0 for b > b_g)
-        b_g = l_g / config.wavenumber(_sys.mu_proj_targ, e_cm)
+        b_g = l_g / config.wavenumber(config.system.mu_proj_targ, e_cm)
         idx_g = np.searchsorted(b_grid, b_g)
         sigma_rutherford[i] = np.pi * b_g**2 * 10  # geometric, mb
 
@@ -182,7 +182,7 @@ def compute_excitation_function(model: TransferModel,
 
     return {
         'e_lab': e_lab_range,
-        'e_cm': np.array([config.e_lab_to_e_cm(e, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+        'e_cm': np.array([config.e_lab_to_e_cm(e, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
                            for e in e_lab_range]),
         'sigma': sigma,
         'sigma_rutherford': sigma_rutherford,
@@ -215,20 +215,20 @@ def compute_angular_distribution(model: TransferModel,
     -------
     result : {'theta_cm', 'theta_lab', 'dsigma_domega', 'dsigma_domega_ruth'}
     """
-    e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+    e_cm = config.e_lab_to_e_cm(e_lab, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
     if n_theta is None:
-        n_theta = _mod.n_theta
+        n_theta = config.model.n_theta
 
     # α 出射角范围 [0, π] (朝后的 α 事件也计入)
     theta_edges = np.linspace(0.0, np.pi, n_theta + 1)
     theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
 
-    b_grid = make_b_grid(e_cm, min(_mod.n_b, 40))
+    b_grid = make_b_grid(e_cm, min(config.model.n_b, 40))
     # 剔除近正碰 (近点进入核区, 融合吸收, 无旁观 α)
     b_min = _alpha_b_min(e_cm)
     b_grid = b_grid[b_grid >= b_min]
     if len(b_grid) < 3:
-        b_grid = make_b_grid(e_cm, min(_mod.n_b, 40))[1:]
+        b_grid = make_b_grid(e_cm, min(config.model.n_b, 40))[1:]
     # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重
     b_w = np.zeros_like(b_grid)
     b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
@@ -266,8 +266,8 @@ def compute_angular_distribution(model: TransferModel,
     dsdo = dsdo * 10.0 / np.maximum(domega, 1e-10)  # → mb/sr
 
     # 入射道卢瑟福截面 (参照曲线, 前向峰)
-    eta = config.sommerfeld(_sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm)
-    k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+    eta = config.sommerfeld(config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm)
+    k = config.wavenumber(config.system.mu_proj_targ, e_cm)
     a = eta / k
     sin_half = np.sin(theta_centers / 2.0)
     dsdo_ruth = (a / (2.0 * k * sin_half**2))**2 * 10.0  # mb/sr
@@ -313,9 +313,9 @@ def compute_alpha_double_differential(model: TransferModel,
       d2sigma : (n_e_alpha, n_theta) 数组, d²σ/dE dΩ (mb/sr/MeV)
     """
     if n_b is None:
-        n_b = min(_mod.n_b, 40)
+        n_b = min(config.model.n_b, 40)
 
-    e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+    e_cm = config.e_lab_to_e_cm(e_lab, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
     b_grid = make_b_grid(e_cm, n_b)
     # 剔除近正碰 (近点进入核区, 融合吸收, 无旁观 α)
     b_min = _alpha_b_min(e_cm)
@@ -410,13 +410,13 @@ def compute_excitation_energy_spectrum(model: TransferModel,
     result : {'e_star', 'dsigma_de', 'e_star_mean', 'e_star_std'}
     """
     if n_b is None:
-        n_b = min(_mod.n_b, 50)  # 平衡精度与速度
+        n_b = min(config.model.n_b, 50)  # 平衡精度与速度
 
-    e_cm = config.e_lab_to_e_cm(e_lab, _sys.proj.mass_MeV, _sys.targ.mass_MeV)
+    e_cm = config.e_lab_to_e_cm(e_lab, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
     b_grid = make_b_grid(e_cm, n_b)
 
     # 激发能范围下限 (E* = Q_capture + E_rel ≥ Q_capture, 故下限安全)
-    q_capture = _sys.q_capture
+    q_capture = config.system.q_capture
     e_star_min = max(0.0, q_capture - 5.0)
 
     # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重, 不能用普通求和
@@ -495,9 +495,9 @@ def compute_full(model: TransferModel,
     result : 包含所有计算结果的大字典
     """
     if e_lab_range is None:
-        e_lab_range = np.arange(_mod.e_lab_min,
-                                 _mod.e_lab_max + _mod.e_lab_step / 2,
-                                 _mod.e_lab_step)
+        e_lab_range = np.arange(config.model.e_lab_min,
+                                 config.model.e_lab_max + config.model.e_lab_step / 2,
+                                 config.model.e_lab_step)
 
     result = {}
 
@@ -516,7 +516,7 @@ def compute_full(model: TransferModel,
         print(f"2. 计算角分布 dσ/dΩ (E_lab={e_mid:.0f} MeV)...")
         print("=" * 50)
     angular = compute_angular_distribution(model, e_mid,
-                                            n_theta=_mod.n_theta,
+                                            n_theta=config.model.n_theta,
                                             n_fermi=n_fermi,
                                             verbose=verbose)
     result['angular'] = angular
@@ -525,7 +525,7 @@ def compute_full(model: TransferModel,
     if all_spectra:
         # 每个 E_lab 各算一张谱 (与 .pace 文件粒度一致)
         e_star_specs = {}
-        n_b_es = min(_mod.n_b, 40)
+        n_b_es = min(config.model.n_b, 40)
         n_fermi_es = max(min(n_fermi, 3000), 1000)  # 控制耗时
         for e_lab in e_lab_range:
             if verbose:
@@ -542,7 +542,7 @@ def compute_full(model: TransferModel,
             print("=" * 50)
         result['e_star_spectrum'] = compute_excitation_energy_spectrum(
             model, e_mid,
-            n_b=min(_mod.n_b, 40),
+            n_b=min(config.model.n_b, 40),
             n_fermi=n_fermi * 2,
             verbose=verbose)
 

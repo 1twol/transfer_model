@@ -55,6 +55,8 @@ NUCLIDES = {
     "Th232": Nuclide("²³²Th", 90, 232, 232.038053608),
     "Pa234": Nuclide("²³⁴Pa", 91, 234, 234.04330556),
     "Pa235": Nuclide("²³⁵Pa", 91, 235, 235.04539900),
+    "Bi209": Nuclide("²⁰⁹Bi", 83, 209, 208.982347),
+    "Bi212": Nuclide("²¹²Bi", 83, 212, 212.004608),
 }
 
 
@@ -105,6 +107,28 @@ class SystemParams:
         self.mu_alpha_t = (m_spec * m_cl) / (m_spec + m_cl)
         self.mu_t_th = (m_cl * m_targ) / (m_cl + m_targ)
         self.mu_alpha_pa = (m_spec * m_prod) / (m_spec + m_prod)
+
+
+def make_system_bismuth() -> SystemParams:
+    """⁷Li + ²⁰⁹Bi 体系 (用于对照 PRL 122 实验的 α 旁观者分布)
+
+    反应: ⁷Li + ²⁰⁹Bi → α + ²¹²Bi
+    Q 值 (AME2020): ²⁰⁹Bi+t→²¹²Bi 为 −5.31 MeV (吸热), 总反应 −7.78 MeV。
+    注: 对照实验只关心 α 旁观者双微分分布 (破裂产额), 不关心 t 俘获产额,
+    所以 Q 值吸热不影响 α 运动学对比。
+    """
+    sys_b = SystemParams(
+        proj=NUCLIDES["Li7"],
+        targ=NUCLIDES["Bi209"],
+        cluster=NUCLIDES["t"],
+        spectator=NUCLIDES["α"],
+        product=NUCLIDES["Bi212"],
+        q_breakup=-2.467994,
+        q_capture=-5.310,   # ²⁰⁹Bi + t → ²¹²Bi (吸热)
+        q_total=-7.778,     # ⁷Li + ²⁰⁹Bi → α + ²¹²Bi
+        vb=29.56,           # PRL Fig.1: E_cm/Vb=1.31, E_cm=38.72 → Vb=29.56
+    )
+    return sys_b
 
 
 # ============================================================
