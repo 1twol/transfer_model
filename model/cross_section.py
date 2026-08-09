@@ -57,6 +57,24 @@ def make_b_grid(e_cm: float, n_b: int = None, b_max: float = None) -> np.ndarray
     return b_grid
 
 
+def _b_quadrature_weights(b_grid: np.ndarray) -> np.ndarray:
+    """非均匀 b 网格的梯形求积权重 (端点半宽, 内部全宽)"""
+    b_w = np.zeros_like(b_grid)
+    b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
+    b_w[-1] = 0.5 * (b_grid[-1] - b_grid[-2])
+    b_w[1:-1] = 0.5 * (b_grid[2:] - b_grid[:-2])
+    return b_w
+
+
+def _exclude_head_on(b_grid: np.ndarray, e_cm: float) -> np.ndarray:
+    """剔除近正碰 (近点进入核区 D(b)<R_int, 融合吸收无旁观 α) 的 b 点"""
+    b_min = _alpha_b_min(e_cm)
+    b_cut = b_grid[b_grid >= b_min]
+    if len(b_cut) < 3:
+        b_cut = b_grid[1:]
+    return b_cut
+
+
 def _near_point_geometry(e_cm: float, b: float) -> Tuple[float, float]:
     """入射道卢瑟福轨道近点: 距离 D(b) 与近点方向角 φ_p (rad, 相对束流)
 
@@ -151,10 +169,7 @@ def compute_excitation_function(model: TransferModel,
         b_grid = make_b_grid(e_cm)
         # 与 α 双微分/角分布一致: 剔除近正碰 (近点进入核区, 融合吸收,
         # 无旁观 α)。保证 σ(E) 与可测 α 截面归一化一致。
-        b_min = _alpha_b_min(e_cm)
-        b_grid = b_grid[b_grid >= b_min]
-        if len(b_grid) < 3:
-            b_grid = make_b_grid(e_cm)[1:]
+        b_grid = _exclude_head_on(b_grid, e_cm)
         p_grid = np.zeros_like(b_grid)
 
         l_g = grazing_angular_momentum(e_cm,
@@ -227,16 +242,8 @@ def compute_angular_distribution(model: TransferModel,
     theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
 
     b_grid = make_b_grid(e_cm, min(config.model.n_b, 40))
-    # 剔除近正碰 (近点进入核区, 融合吸收, 无旁观 α)
-    b_min = _alpha_b_min(e_cm)
-    b_grid = b_grid[b_grid >= b_min]
-    if len(b_grid) < 3:
-        b_grid = make_b_grid(e_cm, min(config.model.n_b, 40))[1:]
-    # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重
-    b_w = np.zeros_like(b_grid)
-    b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
-    b_w[-1] = 0.5 * (b_grid[-1] - b_grid[-2])
-    b_w[1:-1] = 0.5 * (b_grid[2:] - b_grid[:-2])
+    b_grid = _exclude_head_on(b_grid, e_cm)
+    b_w = _b_quadrature_weights(b_grid)
 
     all_theta = []
     all_w = []
@@ -322,17 +329,9 @@ def compute_alpha_double_differential(model: TransferModel,
 
     e_cm = config.e_lab_to_e_cm(e_lab, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
     b_grid = make_b_grid(e_cm, n_b)
-    # 剔除近正碰 (近点进入核区, 融合吸收, 无旁观 α)
-    b_min = _alpha_b_min(e_cm)
-    b_grid = b_grid[b_grid >= b_min]
-    if len(b_grid) < 3:
-        b_grid = make_b_grid(e_cm, n_b)[1:]
+    b_grid = _exclude_head_on(b_grid, e_cm)
 
-    # b 梯形求积权重
-    b_w = np.zeros_like(b_grid)
-    b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
-    b_w[-1] = 0.5 * (b_grid[-1] - b_grid[-2])
-    b_w[1:-1] = 0.5 * (b_grid[2:] - b_grid[:-2])
+    b_w = _b_quadrature_weights(b_grid)
 
     all_th = []
     all_e = []
@@ -424,11 +423,7 @@ def compute_excitation_energy_spectrum(model: TransferModel,
     q_capture = config.system.q_capture
     e_star_min = max(0.0, q_capture - 5.0)
 
-    # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重, 不能用普通求和
-    b_w = np.zeros_like(b_grid)
-    b_w[0] = 0.5 * (b_grid[1] - b_grid[0])
-    b_w[-1] = 0.5 * (b_grid[-1] - b_grid[-2])
-    b_w[1:-1] = 0.5 * (b_grid[2:] - b_grid[:-2])
+    b_w = _b_quadrature_weights(b_grid)
 
     # 累积所有样本的 (E*, 截面权重); 权重按每个样本自身的 p_i 计
     all_e_star = []
