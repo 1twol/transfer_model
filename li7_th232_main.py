@@ -237,6 +237,7 @@ def main(args=None):
         _mod.n_theta = 20
         args.n_fermi = 500
         args.cascades = 1000
+        args.no_pace4 = True   # quick 只算激发函数, 无 E* 谱可喂 PACE4
         print(">>> 快速测试模式 (减少抽样数, 精度与标准模式一致) <<<")
 
     if args.energy:

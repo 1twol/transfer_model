@@ -105,8 +105,8 @@ class TunnelingModel(TransferModel):
         super().__init__("Tunneling")
         if kappa is None:
             # κ 由弹核内 α-t 团簇的分离能决定 (S_αt = 2.468 MeV)
-            be = abs(_sys.q_breakup)
-            self.kappa = np.sqrt(2.0 * _sys.mu_alpha_t * be) / config.HBARC
+            be = abs(config.system.q_breakup)
+            self.kappa = np.sqrt(2.0 * config.system.mu_alpha_t * be) / config.HBARC
         else:
             self.kappa = kappa
         self.p0 = p0
@@ -114,7 +114,7 @@ class TunnelingModel(TransferModel):
     def probability(self, e_cm: float, b: float, **kwargs) -> float:
         """P(D) = P₀ exp(-2κ D)"""
         d = config.distance_of_closest_approach(
-            _sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm, b
+            config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm, b
         )
         return self.p0 * np.exp(-2.0 * self.kappa * d)
 
@@ -122,8 +122,8 @@ class TunnelingModel(TransferModel):
         """角度依赖的转移概率"""
         from .kinematics import impact_parameter_from_angle
         b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         _sys.proj.Z, _sys.targ.Z,
-                                         _sys.mu_proj_targ)
+                                         config.system.proj.Z, config.system.targ.Z,
+                                         config.system.mu_proj_targ)
         return self.probability(e_cm, b)
 
 
@@ -150,8 +150,8 @@ class QWindowTunnelingModel(TransferModel):
         super().__init__("Q-window Tunneling")
         if kappa is None:
             # κ 由弹核内 α-t 团簇的分离能决定 (S_αt = 2.468 MeV)
-            be = abs(_sys.q_breakup)
-            self.kappa = np.sqrt(2.0 * _sys.mu_alpha_t * be) / config.HBARC
+            be = abs(config.system.q_breakup)
+            self.kappa = np.sqrt(2.0 * config.system.mu_alpha_t * be) / config.HBARC
         else:
             self.kappa = kappa
 
@@ -169,10 +169,10 @@ class QWindowTunnelingModel(TransferModel):
 
         其中 1,2 是入射道, 3,4 是出口道
         """
-        z_proj = _sys.proj.Z    # Z₁ = 3 (⁷Li)
-        z_targ = _sys.targ.Z    # Z₂ = 90 (²³²Th)
-        z_spec = _sys.spectator.Z  # Z₃ = 2 (α)
-        z_prod = _sys.product.Z    # Z₄ = 91 (²³⁵Pa)
+        z_proj = config.system.proj.Z    # Z₁ = 3 (⁷Li)
+        z_targ = config.system.targ.Z    # Z₂ = 90 (²³²Th)
+        z_spec = config.system.spectator.Z  # Z₃ = 2 (α)
+        z_prod = config.system.product.Z    # Z₄ = 91 (²³⁵Pa)
         # 在擦边处
         ratio = (z_spec * z_prod) / (z_proj * z_targ)
         return (ratio - 1.0) * e_cm
@@ -180,7 +180,7 @@ class QWindowTunnelingModel(TransferModel):
     def probability(self, e_cm: float, b: float, **kwargs) -> float:
         """含 Q 窗的概率"""
         d = config.distance_of_closest_approach(
-            _sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm, b
+            config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm, b
         )
 
         # 隧穿因子
@@ -188,14 +188,14 @@ class QWindowTunnelingModel(TransferModel):
 
         # 最优激发能 (库仑匹配): E*_opt = Q_total − Q_opt
         q_opt = self.q_opt(e_cm, d)
-        e_star_opt = _sys.q_total - q_opt
+        e_star_opt = config.system.q_total - q_opt
 
         # 事件激发能: 由准自由 t-Th 相对动能给出 E* = Q_capture + E_rel
         k_vec = kwargs.get('k_vec')
         if k_vec is not None:
             e_star = t_th_relative_energy(e_cm, k_vec[0], k_vec[1])[1]
         else:
-            e_star = _sys.q_capture
+            e_star = config.system.q_capture
 
         p_q = np.exp(-(e_star - e_star_opt)**2 / (2.0 * self.gamma_q**2))
 
@@ -204,8 +204,8 @@ class QWindowTunnelingModel(TransferModel):
     def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
         from .kinematics import impact_parameter_from_angle
         b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         _sys.proj.Z, _sys.targ.Z,
-                                         _sys.mu_proj_targ)
+                                         config.system.proj.Z, config.system.targ.Z,
+                                         config.system.mu_proj_targ)
         return self.probability(e_cm, b, **kwargs)
 
 
@@ -237,7 +237,7 @@ class SemiclassicalTransferModel(TransferModel):
     def __init__(self, d0: float = None):
         super().__init__("Semiclassical DWBA")
         if d0 is None:
-            self.d0 = _mod.d0_manual
+            self.d0 = config.model.d0_manual
         else:
             self.d0 = d0
 
@@ -248,8 +248,8 @@ class SemiclassicalTransferModel(TransferModel):
           φ_αt(r) ≈ √(2κ/4π) · exp(-κr)/r
           κ = √(2μ_αt·BE)/ħ
         """
-        be = abs(_sys.q_breakup)
-        kappa = np.sqrt(2.0 * _sys.mu_alpha_t * be) / config.HBARC
+        be = abs(config.system.q_breakup)
+        kappa = np.sqrt(2.0 * config.system.mu_alpha_t * be) / config.HBARC
         norm = np.sqrt(2.0 * kappa / (4.0 * np.pi))
         phi = norm * np.exp(-kappa * max(r, 1e-6)) / max(r, 1e-6)
         return self.d0 * phi
@@ -260,7 +260,7 @@ class SemiclassicalTransferModel(TransferModel):
         P(b) ≈ (2π/ħ) · D₀² |φ_αt(D)|² / [v · |d/dR(κ_i(R) - κ_f(R))|_D]
         """
         d = config.distance_of_closest_approach(
-            _sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm, b
+            config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm, b
         )
 
         # 形状因子在最近接近距离处
@@ -268,18 +268,18 @@ class SemiclassicalTransferModel(TransferModel):
         form_sq = form**2
 
         # 定态相位点处的速度
-        v_rel = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
+        v_rel = np.sqrt(2.0 * e_cm / config.system.mu_proj_targ)
 
         # 入射道 / 出口道局域动量差
         # κ_i² = 2μ_i (E - V_i(r))/ħ²
         kappa_i = self._local_wavenumber(e_cm, d, 'in')
-        kappa_f = self._local_wavenumber(e_cm + _sys.q_total, d, 'out')
+        kappa_f = self._local_wavenumber(e_cm + config.system.q_total, d, 'out')
 
         # d/dR (κ_i - κ_f) 在 D 处
         dr = 0.1  # fm
         d_plus = d + dr
         dk_i_plus = self._local_wavenumber(e_cm, d_plus, 'in')
-        dk_f_plus = self._local_wavenumber(e_cm + _sys.q_total, d_plus, 'out')
+        dk_f_plus = self._local_wavenumber(e_cm + config.system.q_total, d_plus, 'out')
         dkappa_dr = (dk_i_plus - dk_f_plus - kappa_i + kappa_f) / dr
 
         if abs(dkappa_dr) < 1e-10:
@@ -298,14 +298,14 @@ class SemiclassicalTransferModel(TransferModel):
         如果 E - V(r) < 0 → 虚构波数 (隧穿区)
         """
         if channel == 'in':
-            z1, z2 = _sys.proj.Z, _sys.targ.Z
-            a1, a2 = _sys.proj.A, _sys.targ.A
-            mu = _sys.mu_proj_targ
+            z1, z2 = config.system.proj.Z, config.system.targ.Z
+            a1, a2 = config.system.proj.A, config.system.targ.A
+            mu = config.system.mu_proj_targ
             # 核势 ~0 在擦边距离 (库仑主导)
         else:  # 'out'
-            z1, z2 = _sys.spectator.Z, _sys.product.Z
-            a1, a2 = _sys.spectator.A, _sys.product.A
-            mu = _sys.mu_alpha_pa
+            z1, z2 = config.system.spectator.Z, config.system.product.Z
+            a1, a2 = config.system.spectator.A, config.system.product.A
+            mu = config.system.mu_alpha_pa
 
         v_coul = z1 * z2 * config.E2 / max(r, 1e-6)
         diff = e - v_coul
@@ -319,8 +319,8 @@ class SemiclassicalTransferModel(TransferModel):
     def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
         from .kinematics import impact_parameter_from_angle
         b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         _sys.proj.Z, _sys.targ.Z,
-                                         _sys.mu_proj_targ)
+                                         config.system.proj.Z, config.system.targ.Z,
+                                         config.system.mu_proj_targ)
         return self.probability(e_cm, b, **kwargs)
 
 
@@ -345,8 +345,8 @@ class FermiIntegratedModel(TransferModel):
                  use_numerov_wf: bool = False, f_icf: float = 0.25):
         super().__init__("Fermi-Integrated")
         if kappa is None:
-            be = abs(_sys.q_breakup)
-            self.kappa = np.sqrt(2.0 * _sys.mu_alpha_t * be) / config.HBARC
+            be = abs(config.system.q_breakup)
+            self.kappa = np.sqrt(2.0 * config.system.mu_alpha_t * be) / config.HBARC
         else:
             self.kappa = kappa
 
@@ -371,25 +371,25 @@ class FermiIntegratedModel(TransferModel):
 
         # 7Li+Th 入射道势垒
         v_tot = total_potential(r_grid, 1.0,
-                                 _sys.proj.Z, _sys.proj.A,
-                                 _sys.targ.Z, _sys.targ.A,
-                                 _mod.v0_in, _mod.r0_in, _mod.a_in)
+                                 config.system.proj.Z, config.system.proj.A,
+                                 config.system.targ.Z, config.system.targ.A,
+                                 config.model.v0_in, config.model.r0_in, config.model.a_in)
         rb, vb, curv = find_barrier(r_grid, v_tot)
         self._rb = rb
         self._vb = vb
-        self._hbar_omega = config.HBARC * np.sqrt(max(abs(curv), 1e-6) / _sys.mu_proj_targ)
+        self._hbar_omega = config.HBARC * np.sqrt(max(abs(curv), 1e-6) / config.system.mu_proj_targ)
 
         # t+Th 俘获道势垒 (Akyüz-Winther 估算 t-Th 核势)
         v0_t, r0_t, a_t = akyuz_winther_potential(
-            _sys.cluster.A, _sys.targ.Z, _sys.targ.A, _sys.cluster.Z)
+            config.system.cluster.A, config.system.targ.Z, config.system.targ.A, config.system.cluster.Z)
         v_tth = total_potential(r_grid, 1.0,
-                                 _sys.cluster.Z, _sys.cluster.A,
-                                 _sys.targ.Z, _sys.targ.A,
+                                 config.system.cluster.Z, config.system.cluster.A,
+                                 config.system.targ.Z, config.system.targ.A,
                                  v0_t, r0_t, a_t)
         rb_t, vb_t, curv_t = find_barrier(r_grid, v_tth)
         self._rb_tth = rb_t
         self._vb_tth = vb_t
-        self._hw_tth = config.HBARC * np.sqrt(max(abs(curv_t), 1e-6) / _sys.mu_t_th)
+        self._hw_tth = config.HBARC * np.sqrt(max(abs(curv_t), 1e-6) / config.system.mu_t_th)
 
     def probability(self, e_cm: float, b: float,
                      n_fermi_samples: int = 5000,
@@ -427,7 +427,7 @@ class FermiIntegratedModel(TransferModel):
             b_g = 0.0
         b_g = max(b_g, 0.01)
         if self.delta_b is None:
-            self.delta_b = _mod.a0 * 0.8
+            self.delta_b = config.model.a0 * 0.8
         p_geo = 1.0 / (1.0 + np.exp((b - b_g) / self.delta_b))
 
         # 入射道势垒穿透 (7Li+Th)
@@ -439,8 +439,8 @@ class FermiIntegratedModel(TransferModel):
         if n_fermi_samples <= 0:
             if return_details:
                 return p_base, {'d': b_g, 'probabilities': np.array([p_base]),
-                                'e_star': np.array([_sys.q_capture]),
-                                'q_eff': np.array([_sys.q_capture]), 'q_opt': 0.0}
+                                'e_star': np.array([config.system.q_capture]),
+                                'q_eff': np.array([config.system.q_capture]), 'q_opt': 0.0}
             return p_base
 
         # 费米动量抽样 → 每事件 t-Th 俘获概率
@@ -487,8 +487,8 @@ class FermiIntegratedModel(TransferModel):
     def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
         from .kinematics import impact_parameter_from_angle
         b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         _sys.proj.Z, _sys.targ.Z,
-                                         _sys.mu_proj_targ)
+                                         config.system.proj.Z, config.system.targ.Z,
+                                         config.system.mu_proj_targ)
         return self.probability(e_cm, b, **kwargs)
 
 
@@ -533,13 +533,13 @@ class ICFFractionModel(TransferModel):
         from .potentials import total_potential, find_barrier
         r_grid = np.linspace(0.5, 30.0, 2000)
         v_tot = total_potential(r_grid, 1.0,
-                                 _sys.proj.Z, _sys.proj.A,
-                                 _sys.targ.Z, _sys.targ.A,
-                                 _mod.v0_in, _mod.r0_in, _mod.a_in)
+                                 config.system.proj.Z, config.system.proj.A,
+                                 config.system.targ.Z, config.system.targ.A,
+                                 config.model.v0_in, config.model.r0_in, config.model.a_in)
         rb, vb, curv = find_barrier(r_grid, v_tot)
         self._rb = rb
         self._vb = vb
-        self._hbar_omega = config.HBARC * np.sqrt(max(abs(curv), 1e-6) / _sys.mu_proj_targ)
+        self._hbar_omega = config.HBARC * np.sqrt(max(abs(curv), 1e-6) / config.system.mu_proj_targ)
 
     def probability(self, e_cm: float, b: float,
                      n_fermi_samples: int = 2000,
@@ -550,7 +550,7 @@ class ICFFractionModel(TransferModel):
 
         n_fermi_samples=0 时只返回几何概率, 不做费米动量积分。
         """
-        k = config.wavenumber(_sys.mu_proj_targ, e_cm)
+        k = config.wavenumber(config.system.mu_proj_targ, e_cm)
 
         self._ensure_barrier()
         rb = self._rb
@@ -569,7 +569,7 @@ class ICFFractionModel(TransferModel):
         b_g = max(b_g, 0.01)
 
         if self.delta_b is None:
-            self.delta_b = _mod.a0 * 0.8
+            self.delta_b = config.model.a0 * 0.8
 
         p_geo = 1.0 / (1.0 + np.exp((b - b_g) / self.delta_b))
         p_base = t_barrier * self.f_icf * p_geo
@@ -578,8 +578,8 @@ class ICFFractionModel(TransferModel):
         if n_fermi_samples <= 0:
             if return_details:
                 return p_base, {'d': b_g, 'b_g': b_g, 'probabilities': np.array([p_base]),
-                                 'e_star': np.array([_sys.q_capture]),
-                                 'q_eff': np.array([_sys.q_total]), 'q_opt': 0.0}
+                                 'e_star': np.array([config.system.q_capture]),
+                                 'q_eff': np.array([config.system.q_total]), 'q_opt': 0.0}
             return p_base
 
         # 费米动量积分 (对激发能分布)
@@ -595,7 +595,7 @@ class ICFFractionModel(TransferModel):
         if return_details:
             return p_base, {
                 'd': config.distance_of_closest_approach(
-                    _sys.proj.Z, _sys.targ.Z, _sys.mu_proj_targ, e_cm, b),
+                    config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm, b),
                 'b_g': b_g,
                 'k_mag': k_mag,
                 'k_theta': k_theta,
@@ -617,8 +617,8 @@ class ICFFractionModel(TransferModel):
     def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
         from .kinematics import impact_parameter_from_angle
         b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         _sys.proj.Z, _sys.targ.Z,
-                                         _sys.mu_proj_targ)
+                                         config.system.proj.Z, config.system.targ.Z,
+                                         config.system.mu_proj_targ)
         return self.probability(e_cm, b, **kwargs)
 
 

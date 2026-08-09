@@ -18,7 +18,7 @@ from scipy.integrate import simpson
 
 from . import config
 from .kinematics import grazing_angular_momentum, coulomb_recoil
-from .transfer import TransferModel, FermiIntegratedModel, ICFFractionModel
+from .transfer import TransferModel
 
 _sys = config.system          # 供模块内函数引用; 对比脚本可临时替换 config.system
 _mod = config.model
@@ -161,10 +161,10 @@ def compute_excitation_function(model: TransferModel,
         l_g_values[i] = l_g
 
         for j, b in enumerate(b_grid):
-            if isinstance(model, (FermiIntegratedModel, ICFFractionModel)):
-                p_grid[j] = model.probability(e_cm, b, n_fermi_samples=n_fermi)
-            else:
-                p_grid[j] = model.probability(e_cm, b)
+            # 对所有模型统一取费米平均 <P(b)>: 对 P_tr 依赖 k 的模型 (qwindow)
+            # 必须用平均, 否则 σ(E) 与 E* 谱总截面不一致
+            _, _, p_vec, _ = model.event_distribution(e_cm, b, n_fermi)
+            p_grid[j] = float(np.mean(p_vec))
 
         # σ = 2π ∫ b P(b) db
         # 1 fm² = 10 mb
