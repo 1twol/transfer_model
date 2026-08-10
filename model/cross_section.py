@@ -398,7 +398,9 @@ def compute_excitation_energy_spectrum(model: TransferModel,
     双重积分:
       dσ/dE* = ∫ b db · 2π · dP/dE*(b)
 
-    其中 dP/dE* 来自费米动量分布投影到激发能。
+    能量守恒口径: 每个事件 E* = E_cm + Q_total − E_α(∞) − E_Pa(反冲),
+    其中 E_α(∞) 是 α 旁观者经库仑后加速后的最终动能 (含增益)。α 动能
+    计入激发能预算, 出口道能量严格闭合。负值 (α 拿走全部能量) 截断为 0。
 
     Parameters
     ----------
@@ -419,10 +421,14 @@ def compute_excitation_energy_spectrum(model: TransferModel,
 
     e_cm = config.e_lab_to_e_cm(e_lab, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
     b_grid = make_b_grid(e_cm, n_b)
+    b_grid = b_grid[b_grid >= _alpha_b_min(e_cm)]
+    if len(b_grid) < 3:
+        b_grid = make_b_grid(e_cm, n_b)[1:]
 
-    # 激发能范围下限 (E* = Q_capture + E_rel ≥ Q_capture, 故下限安全)
+    # 能量守恒口径: E* = E_cm + Q_total − E_α(∞) − E_Pa(反冲)
+    # α 最终动能 (含库仑后加速增益) 计入激发能预算, 能量严格闭合
     q_capture = config.system.q_capture
-    e_star_min = max(0.0, q_capture - 5.0)
+    e_star_min = 0.0
 
     # b 积分的求积权重 (梯形): 非均匀 b_grid 必须用权重, 不能用普通求和
     b_w = np.zeros_like(b_grid)
@@ -434,10 +440,22 @@ def compute_excitation_energy_spectrum(model: TransferModel,
     all_e_star = []
     all_w = []
 
+    m_alpha = config.system.spectator.mass_MeV
+    m_pa = config.system.product.mass_MeV
+
     for j, b in enumerate(b_grid):
-        _, _, p_values, e_star_values = model.event_distribution(e_cm, b, n_fermi)
+        k_mag, k_theta, p_values, _ = model.event_distribution(e_cm, b, n_fermi)
         p_values = np.asarray(p_values, dtype=float)
-        e_star_values = np.asarray(e_star_values, dtype=float)
+        k_mag = np.asarray(k_mag, dtype=float)
+        k_theta = np.asarray(k_theta, dtype=float)
+
+        # α 旁观者最终动能 (近点切向 + 费米 + 库仑后加速)
+        _, e_alpha, _ = _alpha_velocity(e_cm, b, k_mag, k_theta)
+        # 235Pa 反冲动能 (动量守恒, Pa 静止近似)
+        v_alpha = np.sqrt(2.0 * e_alpha / m_alpha)
+        e_pa = 0.5 * m_pa * (m_alpha * v_alpha / m_pa)**2
+        # 能量守恒 E*, 负值 (α 拿走全部能量) 截断为 0
+        e_star_values = np.maximum(e_cm + config.system.q_total - e_alpha - e_pa, 0.0)
 
         # 每个样本的截面权重: dσ/dE* ∝ b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb)
         all_e_star.append(e_star_values)
