@@ -41,14 +41,9 @@ Requirements: Python ≥ 3.9, NumPy, SciPy. Matplotlib is optional (for plotting
 # Fast test run (~30 seconds)
 python li7_th232_main.py --quick
 
-# Full calculation with the default ICF model
+# Full calculation (ICF model; α spectator kinetic-energy distribution is the
+# central output)
 python li7_th232_main.py
-
-# Try different transfer models
-python li7_th232_main.py --model fermi      # Fermi-motion-integrated
-python li7_th232_main.py --model tunneling  # Simple exponential tunneling
-python li7_th232_main.py --model qwindow    # Q-value window + tunneling
-python li7_th232_main.py --model dwba       # Semiclassical DWBA
 
 # Custom energy range
 python li7_th232_main.py --energy 20 45 5
@@ -65,12 +60,9 @@ Step through the same computation with prompts (instead of CLI flags):
 python interactive.py
 ```
 
-It asks for: transfer model, quick-test mode, energy range, PACE4 mode,
-Fermi sampling count, plotting, and output directory — then calls the same
-`li7_th232_main.main()` under the hood. Recommended models (icf, fermi) are
-listed first; the schematic ones (tunneling, qwindow, dwba) are hidden behind
-"other schematic models" with a warning that their absolute scale is
-uncalibrated.
+It asks for: transfer model (only icf), quick-test mode, energy range,
+PACE4 mode, Fermi sampling count, plotting, and output directory — then calls
+the same `li7_th232_main.main()` under the hood.
 
 ### As a library
 
@@ -83,6 +75,7 @@ tr_model = create_model("icf")
 result = compute_full(tr_model, e_lab_range=[20, 24, 28, 32, 36, 40])
 
 print(result['excitation']['sigma'])           # excitation function
+print(result['alpha_energy']['e_alpha_mean'])  # mean α kinetic energy (central output)
 print(result['angular']['dsigma_domega'])      # angular distribution
 print(result['e_star_spectrum']['e_star_mean']) # mean excitation energy
 ```
@@ -111,21 +104,21 @@ python generate_pace.py partial.dat --e-star <value_from_table>
 
 ---
 
-## Transfer models
+## Transfer model
 
-| Model | CLI flag | Description |
-|-------|----------|-------------|
-| ICF fraction | `icf` *(default)* | Smooth Fermi-step at grazing angular momentum, scaled by f_ICF; Fermi MC only feeds the E* spectrum |
-| Fermi-integrated | `fermi` | Monte Carlo over ⁷Li internal momentum; per-event t–Th capture via Hill-Wheeler at E_rel(t–Th), times entrance barrier × geometric cutoff |
-| Q-window tunneling | `qwindow` | ⚠ *schematic* — exp(−2κD) × excitation-matching window; absolute scale uncalibrated |
-| Simple tunneling | `tunneling` | ⚠ *schematic* — P ∝ exp(−2κD); absolute scale uncalibrated |
-| Semiclassical DWBA | `dwba` | ⚠ *schematic* — stationary phase, zero-range; absolute scale uncalibrated |
+The only model is **ICF fraction** (`icf`):
 
-> All five models now produce a real excitation-energy distribution dσ/dE* and a
-> forward-peaked α angular distribution via the shared Fermi-momentum sampling.
-> The three ⚠ *schematic* models are for shape comparison only — their absolute σ
-> (P₀/D₀ uncalibrated, ~1e-5–0.3 mb) is not meaningful. In the interactive entry
-> they are hidden behind "other schematic models".
+```
+P(b, E) = T(E) × f_ICF / [1 + exp((b − b_g)/Δb)]
+  T(E)   = 1/[1 + exp(2π(Vb−E_cm)/ħω)]    Hill-Wheeler barrier transmission
+  b_g(E) = Rb·√(1−Vb/E)                    classical angular-momentum cutoff
+  f_ICF  = 0.25 (Lei & Moro 2019)
+```
+
+The absolute scale is set by the entrance-barrier transmission × ICF fraction.
+The α spectator kinetic-energy distribution is fully determined by the
+kinematics (Fermi momentum, near-point tangential velocity, Coulomb
+post-acceleration) and decoupled from P(b).
 
 ---
 
@@ -134,55 +127,59 @@ python generate_pace.py partial.dat --e-star <value_from_table>
 ### Core assumptions
 
 1. **Cluster picture**: ⁷Li → α + t, binding energy BE = 2.468 MeV
-2. **Two-step process**: t tunnels from the α field to the target at grazing distance
-3. **Classical trajectories**: Rutherford hyperbolae for entrance and exit channels
-4. **Sudden approximation**: transfer is instantaneous; α acts as a spectator
+2. **Two-step process**: t transfers at grazing distance and is captured by ²³²Th; α is the spectator
+3. **Classical trajectories**: Rutherford hyperbola for the entrance channel; α departs from the near point with tangential velocity + Fermi
+4. **Sudden approximation**: transfer is instantaneous; α and t separate with momentum conservation
 
 ### Three-body → two-body
 
 The initial state has three bodies: α, t (bound in ⁷Li), and ²³²Th. The t cluster carries a Fermi momentum distribution derived from the α-t relative wave function. Available descriptions:
 
-- **Gaussian approximation** (default): P(k) ∝ k² exp(−k²/2σ²), σ ≈ 0.30 fm⁻¹
+- **Gaussian approximation** (default): P(k) ∝ k² exp(−k²/2σ²), σ ≈ 0.27 fm⁻¹
 - **Numerov solution** (opt-in): full Woods-Saxon bound state + Fourier-Bessel transform
 
 ### Transfer probability
 
 ```
-P_tr(b, E) = ∫ d³k P(k) · P_tr(b, k)
+P_tr(b, E) = T(E_cm)·f_ICF / (1 + exp((b − b_g)/Δb)), f_ICF ≈ 0.25
 ```
 
-Per-model ingredients:
+The Fermi-momentum MC only feeds the event kinematics (α energy, angle, E*),
+not the σ scale.
 
-- **ICF calibration** (default): P_tr(b) = T(E_cm)·f_ICF / (1 + exp((b − b_g)/Δb)), f_ICF ≈ 0.25;
-  the Fermi MC only builds the E* spectrum (not the σ scale).
-- **Fermi-integrated** (`fermi`): P_tr(b, k) = T(E_cm)·f_ICF·p_geo(b)·P_capture(E_rel(t−Th)),
-  where P_capture = Hill–Wheeler transmission through the t–Th barrier evaluated at the
-  event's E_rel. Gives the same absolute scale as `icf` above barrier, with stronger
-  sub-barrier suppression (both entrance and t–Th barriers).
-- **Excitation matching window** (`qwindow`): P_Q = exp(−(E\*_event − E\*_opt)² / 2Γ²), with
-  E\*_event = Q_capture + E_rel(t−Th) and E\*_opt = Q₀ − Q_opt.
-- **Simple tunneling** (`tunneling`): P_tr = P₀·exp(−2κ D_eff), κ ∝ √(μ_BE) — schematic only.
-- **Optimal Q-value**: Q_opt = (Z_α·Z_Pa / Z_Li·Z_Th − 1) · E_cm.
+### Exit channel and excitation energy (energy conservation, single convention)
 
-### Exit channel
-
-After transfer, α and ²³⁵Pa\* separate under their mutual Coulomb repulsion. The
-asymptotic α–Pa kinetic energy is fixed by two-body energy conservation
-(T_rel(∞) = E_cm + Q₀ − E\*), which already includes the Coulomb post-acceleration
-gain acquired as the fragments separate:
+After transfer, α Coulomb-propagates in the ²³⁵Pa field to infinity (including
+the post-acceleration gain C₁/(D+r_αt); the breakup radius = Coulomb near point
+D(b) + the α-t internal separation r_αt, sampled from a Gaussian approximation
+of the bound-state coordinate wave function, σ_r=2.5 fm). Per-event excitation
+energy is fixed by energy conservation:
 
 ```
-E*(²³⁵Pa) = Q_capture + E_rel(t−²³²Th at transfer)
-T_rel(∞)  = E_cm + Q₀ − E*
+E* = E_cm + Q_total − E_α(∞) − E_Pa(recoil)      [energy conservation]
+Capture condition: E* ≥ Q_capture = 8.108 MeV
+Non-capture events (t not captured) are removed from σ(E), dσ/dE_α, dσ/dE*, dσ/dΩ
 ```
+
+The Q_opt single-value estimate (E\*_opt Coulomb matching) is kept only as a
+dashed reference line on plots — experiments show the α kinetic energy is a
+distribution, not a fixed value.
 
 ### Cross sections
 
 ```
-σ(E)       = 2π ∫ b db · P_tr(b, E)             excitation function
-dσ/dΩ_α    = Σ_events 2π·b·P_tr(b,k)·δ(θ_α−θ_α(b,k))   α angular distribution (spectator: α starts at the ⁷Li near point — which lies on the beam axis ahead of the target — with tangential velocity v_near=b·v_∞/D + Fermi, then Coulomb-propagates in the ²³⁵Pa field → asymptotic θ_α, E_α; head-on b events whose near point D(b)<R_int fall inside the nucleus and fuse, emitting no spectator α — same b_min cut applied to σ(E) so all three cross sections normalize consistently)
-dσ/dE*     = ∫ b db · (per-sample P_tr-weighted E* histogram)   excitation energy spectrum
+σ(E)          = 2π ∫ b db · P_tr(b, E)             excitation function
+dσ/dE_α       = Σ_events 2π·b·P_tr(b)·δ(E_α−E_α(b,k))   α spectator kinetic-energy distribution (central output)
+d²σ/dE_α dΩ_α = double-differential heat map (THM frame, for experiment comparison)
+dσ/dΩ_α       = α angular distribution (near-point tangential v_near=b·v_∞/D + Fermi → Coulomb propagation)
+dσ/dE*        = excitation-energy spectrum mapped from the α energy by energy conservation → PACE4 EEXCN
 ```
+
+α starts at the ⁷Li near point (ahead of the target on the beam axis) with
+tangential velocity + Fermi; head-on b events whose near point D(b)<R_int fall
+inside the nucleus and fuse, emitting no spectator α. σ(E), the E* spectrum and
+the α distribution share the same b grid and capture condition, so their
+integrals agree exactly.
 
 ---
 
@@ -195,7 +192,7 @@ transfer_model/
 │   ├── structure.py        # ⁷Li cluster wave function, Fermi momentum sampling
 │   ├── potentials.py       # Coulomb + Woods-Saxon nuclear potentials
 │   ├── kinematics.py       # Rutherford trajectories, grazing angle, frame transforms
-│   ├── transfer.py         # Transfer probability models (5 implementations)
+│   ├── transfer.py         # Transfer probability model (ICF fraction)
 │   └── cross_section.py    # Phase-space integration → cross sections
 ├── post_process.py         # Plotting utilities + PACE4 .pace file generation
 ├── li7_th232_main.py       # CLI entry point
@@ -221,7 +218,8 @@ All adjustable parameters live in `ModelParams` (in `model/config.py`):
 | `d0_manual` | Zero-range constant D₀ | 150 MeV·fm³/² |
 | `n_b` | Impact-parameter grid points | 100 |
 | `n_theta` | Angular grid points | 50 |
-| `gamma_q` | Q-window width (QWindow model) | 3.0 MeV |
+| `f_icf` | ICF fraction (the single calibration parameter) | 0.25 |
+| `sigma_r_alpha_t` | α-t separation width (breakup at D+r_αt) | 2.5 fm |
 
 ---
 
@@ -231,7 +229,7 @@ Built for modular extension. Each physical component is isolated:
 
 - **New projectile**: add mass/charge data in `config.py`; structure and kinematics adapt automatically.
 - **Different potential**: swap `potentials.py` — a São Paulo double-folding interface is already stubbed.
-- **Full DWBA**: extend `SemiclassicalTransferModel` in `transfer.py` with finite-range form factors.
+- **Full DWBA**: extend the `TransferModel` base class in `transfer.py` with finite-range form factors.
 - **CDCC**: replace `kinematics.py` with coupled-discretized-continuum channels.
 
 ---

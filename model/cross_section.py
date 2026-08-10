@@ -99,12 +99,19 @@ def _alpha_b_min(e_cm: float) -> float:
     return np.sqrt(max(r_int * r_int - 2.0 * a * r_int, 0.0))
 
 
-def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta,
+                    r_alphat=None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """α 旁观者的初始速度 (近点切向推进 + 费米) 与库仑传播结果
 
-    α 在近点 (D, φ_p) 继承 ⁷Li 的近点切向速度 v_near = b·v_∞/D (角动量
-    守恒, 非渐近速度 v_∞——近点处 7Li 大部分动能已转为库仑势能), 叠加上
-    7Li 静止系内与 t 反向的费米速度, 再经 coulomb_recoil 传播到无穷远。
+    α 在破裂点 (D + r_αt, φ_p) 继承 ⁷Li 的近点切向速度 v_near = b·v_∞/D
+    (角动量守恒, 非渐近速度 v_∞——近点处 7Li 大部分动能已转为库仑势能),
+    叠加上 7Li 静止系内与 t 反向的费米速度, 再经 coulomb_recoil 传播到
+    无穷远。破裂点距离 = 库仑近点 D(b) + α-t 内部间距 r_αt (从束缚态
+    波函数抽样), 库仑后加速增益 C₁/(D+r_αt) 随 r_αt 涨落 → E_α 展宽。
+
+    Parameters
+    ----------
+    r_alphat : 数组或标量, α-t 相对距离 (fm); None 等价于 0 (近点处破裂)
 
     Returns
     -------
@@ -126,9 +133,56 @@ def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta) -> Tuple[np.ndarray, 
     v_aperp = v_near + (m_t / m_alpha) * v_t * np.sin(np.asarray(k_theta, float))
 
     e_breakup = 0.5 * m_alpha * (v_ax**2 + v_aperp**2)
-    theta_out, e_out = coulomb_recoil(d, phi_p, v_ax, v_aperp,
+    # 破裂点距离 = D(b) + r_αt: α 的库仑势能 (后加速增益) 随 r_αt 涨落
+    r_breakup = d + (0.0 if r_alphat is None else np.asarray(r_alphat, float))
+    theta_out, e_out = coulomb_recoil(r_breakup, phi_p, v_ax, v_aperp,
                                       config.system.spectator.Z, config.system.product.Z, m_alpha)
     return theta_out, e_out, e_breakup
+
+
+_alpha_t_sampler = None
+
+
+def _sample_alpha_t_radius(n: int) -> np.ndarray:
+    """抽样 α-t 内部间距 r_αt (fm), 从束缚态坐标波函数 (懒加载缓存)"""
+    global _alpha_t_sampler
+    if _alpha_t_sampler is None:
+        from .structure import AlphaTRadiusSampler
+        _alpha_t_sampler = AlphaTRadiusSampler()
+    return _alpha_t_sampler.sample(n)
+
+
+def _event_physics(model, e_cm: float, b: float, n_fermi: int) -> Dict:
+    """一次费米事件抽样, 返回全部事件物理量 (全链路唯一口径)
+
+    E* = E_cm + Q_total − E_α(∞) − E_Pa    (能量守恒, α 动能含库仑后加速)
+    capture = E* ≥ Q_capture: t 被 ²³²Th 俘获才算转移; 不满足的事件
+    (α 拿走全部能量, t 未被俘获) 从所有截面/谱中剔除。
+    """
+    k_mag, k_theta, p = model.event_distribution(e_cm, b, n_fermi)
+    p = np.asarray(p, dtype=float)
+    k_mag = np.asarray(k_mag, dtype=float)
+    k_theta = np.asarray(k_theta, dtype=float)
+
+    # α-t 内部间距 r_αt: 破裂点距离 = D(b) + r_αt, 库仑增益随其涨落
+    r_alphat = _sample_alpha_t_radius(n_fermi)
+
+    # α 旁观者: 近点切向初速 + 费米 → 库仑传播 → 渐近 (θ_α, E_α)
+    theta_alpha, e_alpha, _ = _alpha_velocity(e_cm, b, k_mag, k_theta, r_alphat)
+
+    # ²³⁵Pa 反冲动能 (Pa 静止近似)
+    m_alpha = config.system.spectator.mass_MeV
+    m_pa = config.system.product.mass_MeV
+    v_alpha = np.sqrt(2.0 * e_alpha / m_alpha)
+    e_pa = 0.5 * m_pa * (m_alpha * v_alpha / m_pa)**2
+
+    # 能量守恒激发能 + 俘获条件
+    e_star = e_cm + config.system.q_total - e_alpha - e_pa
+    capture = e_star >= config.system.q_capture
+
+    return {'k_mag': k_mag, 'k_theta': k_theta, 'p': p,
+            'theta_alpha': theta_alpha, 'e_alpha': e_alpha,
+            'e_pa': e_pa, 'e_star': e_star, 'capture': capture}
 
 
 # ============================================================
@@ -147,7 +201,7 @@ def compute_excitation_function(model: TransferModel,
     ----------
     model : 转移模型
     e_lab_range : 实验室系能量数组 (MeV), None 则用 config 默认
-    n_fermi : 费米动量抽样数 (仅对 FermiIntegratedModel)
+    n_fermi : 费米动量抽样数
     verbose : 是否打印进度
 
     Returns
@@ -179,10 +233,10 @@ def compute_excitation_function(model: TransferModel,
         l_g_values[i] = l_g
 
         for j, b in enumerate(b_grid):
-            # 对所有模型统一取费米平均 <P(b)>: 对 P_tr 依赖 k 的模型 (qwindow)
-            # 必须用平均, 否则 σ(E) 与 E* 谱总截面不一致
-            _, _, p_vec, _ = model.event_distribution(e_cm, b, n_fermi)
-            p_grid[j] = float(np.mean(p_vec))
+            # 对所有模型统一取费米平均 <P(b)>: 按俘获条件 (E* ≥ Q_cap) 剔除
+            # 非俘获事件后平均, 保证 σ(E) 与 E* 谱/α 分布口径一致
+            ev = _event_physics(model, e_cm, b, n_fermi)
+            p_grid[j] = float(np.sum(ev['p'] * ev['capture']) / len(ev['p']))
 
         # σ = 2π ∫ b P(b) db
         # 1 fm² = 10 mb
@@ -249,22 +303,18 @@ def compute_angular_distribution(model: TransferModel,
     all_w = []
 
     for j, b in enumerate(b_grid):
-        k_mag, k_theta, p, _ = model.event_distribution(e_cm, b, n_fermi)
-        p = np.asarray(p, dtype=float)
-        k_mag = np.asarray(k_mag, dtype=float)
-        k_theta = np.asarray(k_theta, dtype=float)
+        ev = _event_physics(model, e_cm, b, n_fermi)
 
-        # α 旁观者运动学: 近点切向初速 + 库仑后传播 → 渐近出射角
-        th_alpha, _, _ = _alpha_velocity(e_cm, b, k_mag, k_theta)
+        # 每个样本的截面权重: b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb);
+        # 非俘获事件 (E* < Q_cap) 权重置 0
+        w = b_w[j] * 2.0 * np.pi * b * ev['p'] / len(ev['p'])
+        w = np.where(ev['capture'], w, 0.0)
 
-        # 每个样本的截面权重: b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb)
-        w = b_w[j] * 2.0 * np.pi * b * p / len(p)
-
-        all_theta.append(th_alpha)
+        all_theta.append(ev['theta_alpha'])
         all_w.append(w)
 
         if verbose and (j % max(1, len(b_grid) // 4) == 0):
-            print(f"  b={b:.1f} fm, <P>={np.mean(p):.4e}")
+            print(f"  b={b:.1f} fm, <P>={np.mean(ev['p']):.4e}")
 
     theta_all = np.concatenate(all_theta)
     w_all = np.concatenate(all_w)
@@ -338,17 +388,12 @@ def compute_alpha_double_differential(model: TransferModel,
     all_w = []
 
     for j, b in enumerate(b_grid):
-        k_mag, k_theta, p, _ = model.event_distribution(e_cm, b, n_fermi)
-        p = np.asarray(p, dtype=float)
-        k_mag = np.asarray(k_mag, dtype=float)
-        k_theta = np.asarray(k_theta, dtype=float)
+        ev = _event_physics(model, e_cm, b, n_fermi)
 
-        # α 旁观者运动学: 近点切向初速 + 库仑后传播 → 渐近出射角/能量
-        th_alpha, e_alpha, _ = _alpha_velocity(e_cm, b, k_mag, k_theta)
-
-        w = b_w[j] * 2.0 * np.pi * b * p / len(p)  # fm²
-        all_th.append(th_alpha)
-        all_e.append(e_alpha)
+        w = b_w[j] * 2.0 * np.pi * b * ev['p'] / len(ev['p'])  # fm²
+        w = np.where(ev['capture'], w, 0.0)
+        all_th.append(ev['theta_alpha'])
+        all_e.append(ev['e_alpha'])
         all_w.append(w)
 
     th_all = np.concatenate(all_th)
@@ -403,7 +448,7 @@ def compute_excitation_energy_spectrum(model: TransferModel,
 
     Parameters
     ----------
-    model : FermiIntegratedModel (必须含费米动量积分)
+    model : 转移模型 (含费米动量抽样)
     e_lab : 实验室系能量 (MeV)
     n_b : b 网格点数
     n_fermi : 费米动量抽样数
@@ -427,7 +472,8 @@ def compute_excitation_energy_spectrum(model: TransferModel,
     # 能量守恒口径: E* = E_cm + Q_total − E_α(∞) − E_Pa(反冲)
     # α 最终动能 (含库仑后加速增益) 计入激发能预算, 能量严格闭合
     q_capture = config.system.q_capture
-    e_star_min = 0.0
+    # 俘获条件: E* ≥ Q_capture, 低于阈值的事件 (t 未被俘获) 剔除
+    e_star_min = q_capture
 
     b_w = _b_quadrature_weights(b_grid)
 
@@ -435,29 +481,19 @@ def compute_excitation_energy_spectrum(model: TransferModel,
     all_e_star = []
     all_w = []
 
-    m_alpha = config.system.spectator.mass_MeV
-    m_pa = config.system.product.mass_MeV
-
     for j, b in enumerate(b_grid):
-        k_mag, k_theta, p_values, _ = model.event_distribution(e_cm, b, n_fermi)
-        p_values = np.asarray(p_values, dtype=float)
-        k_mag = np.asarray(k_mag, dtype=float)
-        k_theta = np.asarray(k_theta, dtype=float)
+        ev = _event_physics(model, e_cm, b, n_fermi)
 
-        # α 旁观者最终动能 (近点切向 + 费米 + 库仑后加速)
-        _, e_alpha, _ = _alpha_velocity(e_cm, b, k_mag, k_theta)
-        # 235Pa 反冲动能 (动量守恒, Pa 静止近似)
-        v_alpha = np.sqrt(2.0 * e_alpha / m_alpha)
-        e_pa = 0.5 * m_pa * (m_alpha * v_alpha / m_pa)**2
-        # 能量守恒 E*, 负值 (α 拿走全部能量) 截断为 0
-        e_star_values = np.maximum(e_cm + config.system.q_total - e_alpha - e_pa, 0.0)
+        # 每个样本的截面权重: dσ/dE* ∝ b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb);
+        # 非俘获事件 (E* < Q_cap) 权重置 0
+        w = b_w[j] * 2.0 * np.pi * b * ev['p'] / len(ev['p'])
+        w = np.where(ev['capture'], w, 0.0)
 
-        # 每个样本的截面权重: dσ/dE* ∝ b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb)
-        all_e_star.append(e_star_values)
-        all_w.append(b_w[j] * 2.0 * np.pi * b * p_values / len(p_values))
+        all_e_star.append(ev['e_star'])
+        all_w.append(w)
 
         if verbose and (j % max(1, n_b // 4) == 0):
-            print(f"  b={b:.1f} fm, <P>={np.mean(p_values):.4e}")
+            print(f"  b={b:.1f} fm, <P>={np.mean(ev['p']):.4e}")
 
     e_star_all = np.concatenate(all_e_star)
     w_all = np.concatenate(all_w)
@@ -485,6 +521,93 @@ def compute_excitation_energy_spectrum(model: TransferModel,
         'e_star_mean': e_star_mean,
         'e_star_std': e_star_std,
         'q_capture': q_capture,
+        'e_lab': e_lab,
+        'e_cm': e_cm,
+    }
+
+
+def compute_alpha_energy_distribution(model: TransferModel,
+                                      e_lab: float,
+                                      n_b: int = None,
+                                      n_fermi: int = 10000,
+                                      n_e_alpha_bins: int = 50,
+                                      verbose: bool = True) -> Dict:
+    """计算 α 旁观者动能分布 dσ/dE_α (核心输出)
+
+    每个费米事件: α 在近点继承 ⁷Li 近点切向速度 + 内部费米速度 (与 t 反向),
+    经 coulomb_recoil 在 ²³⁵Pa 库仑排斥场中传播到无穷远, 得到渐近动能
+    E_α (含库仑后加速增益)。按转移概率 P_tr 加权 bin, 非俘获事件
+    (E* < Q_cap, t 未被俘获) 剔除。与 E* 谱 (能量守恒口径) 严格一致:
+    ∫ dσ/dE_α dE_α = ∫ dσ/dE* dE* = σ_tr。
+
+    Parameters
+    ----------
+    model : 转移模型
+    e_lab : 实验室系能量 (MeV)
+    n_b, n_fermi : b 网格数、费米抽样数
+    n_e_alpha_bins : E_α 分 bin 数
+
+    Returns
+    -------
+    result : {'e_alpha', 'dsigma_de', 'e_alpha_mean', 'e_alpha_std',
+              'q_capture', 'e_lab', 'e_cm'}
+      e_alpha : 动能网格中心 (MeV)
+      dsigma_de : dσ/dE_α (mb/MeV)
+    """
+    if n_b is None:
+        n_b = min(config.model.n_b, 50)
+
+    e_cm = config.e_lab_to_e_cm(e_lab, config.system.proj.mass_MeV, config.system.targ.mass_MeV)
+    b_grid = make_b_grid(e_cm, n_b)
+    b_grid = b_grid[b_grid >= _alpha_b_min(e_cm)]
+    if len(b_grid) < 3:
+        b_grid = make_b_grid(e_cm, n_b)[1:]
+
+    b_w = _b_quadrature_weights(b_grid)
+
+    all_e_alpha = []
+    all_w = []
+
+    for j, b in enumerate(b_grid):
+        ev = _event_physics(model, e_cm, b, n_fermi)
+
+        # 每个样本的截面权重: b_w·2π·b·(p_i/N)  (fm², 最后 ×10 → mb);
+        # 非俘获事件 (E* < Q_cap) 权重置 0
+        w = b_w[j] * 2.0 * np.pi * b * ev['p'] / len(ev['p'])
+        w = np.where(ev['capture'], w, 0.0)
+
+        all_e_alpha.append(ev['e_alpha'])
+        all_w.append(w)
+
+        if verbose and (j % max(1, n_b // 4) == 0):
+            print(f"  b={b:.1f} fm, <P>={np.mean(ev['p']):.4e}")
+
+    e_alpha_all = np.concatenate(all_e_alpha)
+    w_all = np.concatenate(all_w)
+
+    # 自适应 bin 上界: 覆盖全部采样到的 E_α (不丢高能尾)
+    e_alpha_max = float(e_alpha_all.max())
+    if e_alpha_max < 1.0:
+        e_alpha_max = 40.0
+    e_alpha_edges = np.linspace(0.0, e_alpha_max, n_e_alpha_bins + 1)
+    e_alpha_centers = 0.5 * (e_alpha_edges[:-1] + e_alpha_edges[1:])
+
+    # 单位转换: fm² → mb (×10), bin 宽度归一化 → mb/MeV
+    dsigma_de, _ = np.histogram(e_alpha_all, bins=e_alpha_edges, weights=w_all)
+    dsigma_de *= 10.0
+    de = e_alpha_edges[1] - e_alpha_edges[0]
+    dsigma_de /= de
+
+    e_alpha_mean = np.average(e_alpha_centers, weights=dsigma_de + 1e-30)
+    e_alpha_std = np.sqrt(np.average((e_alpha_centers - e_alpha_mean)**2,
+                                      weights=dsigma_de + 1e-30))
+
+    return {
+        'e_alpha': e_alpha_centers,
+        'dsigma_de': dsigma_de,
+        'e_alpha_mean': e_alpha_mean,
+        'e_alpha_std': e_alpha_std,
+        'q_capture': config.system.q_capture,
         'e_lab': e_lab,
         'e_cm': e_cm,
     }
@@ -538,6 +661,11 @@ def compute_full(model: TransferModel,
                                             n_fermi=n_fermi,
                                             verbose=verbose)
     result['angular'] = angular
+
+    # 2b. 中位能量 α 旁观者动能分布 (核心输出)
+    result['alpha_energy'] = compute_alpha_energy_distribution(
+        model, e_mid, n_b=min(config.model.n_b, 40),
+        n_fermi=max(n_fermi, 2000), verbose=False)
 
     # 3. 激发能谱
     if all_spectra:

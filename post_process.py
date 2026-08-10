@@ -440,7 +440,7 @@ def plot_angular_distribution(result: Dict, output_path: str = None):
         print("[WARNING] matplotlib 未安装, 跳过画图")
         return
 
-    ang = result['angular']
+    ang = result.get('angular')
     if not ang:
         return
     fig, ax = plt.subplots(1, 1, figsize=(8, 6))
@@ -517,7 +517,7 @@ def plot_e_star_spectrum(result: Dict, output_path: str = None):
         print("[WARNING] matplotlib 未安装, 跳过画图")
         return
 
-    spec = result['e_star_spectrum']
+    spec = result.get('e_star_spectrum')
     if spec is None:
         return
     fig, ax = plt.subplots(1, 1, figsize=(8, 5))
@@ -586,6 +586,76 @@ def plot_e_star_spec_to_file(spec: Dict, output_path: str,
     plt.savefig(output_path, dpi=150, bbox_inches='tight')
     plt.close(fig)
     print(f"  [plot] E* 谱图 → {output_path}")
+
+
+def _alpha_opt_energy(spec: Dict) -> float:
+    """单值参照: E* = E*_opt (Q_opt 库仑匹配) 对应的单一 α 动能
+
+    由能量守恒 E* = E_cm + Q_total − E_α − E_Pa, E_Pa = (m_α/m_Pa)·E_α
+    (Pa 静止近似) 解出: E_α = (E_cm + Q_total − E*) / (1 + m_α/m_Pa)。
+    与模型算出的分布对比, 展示"α 动能是分布而非固定值"。
+    """
+    e_cm = spec['e_cm']
+    e_opt = _optimal_e_star(e_cm)
+    m_alpha = _sys.spectator.mass_MeV
+    m_pa = _sys.product.mass_MeV
+    return (e_cm + _sys.q_total - e_opt) / (1.0 + m_alpha / m_pa)
+
+
+def plot_alpha_energy_distribution(spec: Dict, output_path: str,
+                                   e_lab: float = None):
+    """α 旁观者动能分布图 (核心输出)
+
+    分布 + <E_α> 红竖线 + 单值参照虚线 (E* = E*_opt 对应的 E_α)。
+    """
+    try:
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("[WARNING] matplotlib 未安装, 跳过画图")
+        return
+
+    if spec is None:
+        return
+    e_lab_ = spec.get('e_lab', e_lab)
+    fig, ax = plt.subplots(1, 1, figsize=(8, 5))
+    ax.fill_between(spec['e_alpha'], 0, spec['dsigma_de'],
+                    color='C0', alpha=0.4)
+    ax.plot(spec['e_alpha'], spec['dsigma_de'], '-', color='C0', lw=2)
+
+    ax.axvline(spec['e_alpha_mean'], color='red', ls='-', lw=1.5,
+               label=f"<E_α>={spec['e_alpha_mean']:.1f} MeV")
+
+    e_opt = _alpha_opt_energy(spec)
+    ax.axvline(e_opt, color='purple', ls=':', lw=2,
+               label=f"E_α(Q_opt)={e_opt:.1f} MeV (single-value)")
+
+    ax.set_xlabel("E_α (MeV)")
+    ax.set_ylabel("dσ/dE_α (mb/MeV)")
+    ax.legend(fontsize=9)
+    ax.set_title(f"α spectator kinetic energy, E_lab={e_lab_:.0f} MeV")
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    plt.close(fig)
+    print(f"  [plot] α 动能分布图 → {output_path}")
+
+
+def write_alpha_energy_distribution(spec: Dict, output_path: str):
+    """α 动能分布数据文件 (供与实验对比)"""
+    os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(f"# Alpha spectator kinetic energy distribution\n")
+        f.write(f"# E_lab = {spec['e_lab']:.1f} MeV   E_cm = {spec['e_cm']:.2f} MeV\n")
+        f.write(f"# <E_alpha> = {spec['e_alpha_mean']:.3f} MeV   "
+                f"std = {spec['e_alpha_std']:.3f} MeV\n")
+        f.write(f"# Single-value reference (E* = E*_opt): "
+                f"E_alpha = {_alpha_opt_energy(spec):.3f} MeV\n")
+        f.write(f"#\n")
+        f.write(f"# {'E_alpha(MeV)':>14s}  {'dsigma/dE_alpha(mb/MeV)':>24s}\n")
+        for e, d in zip(spec['e_alpha'], spec['dsigma_de']):
+            f.write(f"  {e:12.4f}  {d:22.6e}\n")
+    print(f"  [data] α 动能分布 → {output_path}")
 
 
 def plot_e_star_spectra_map(specs: Dict, output_path: str = None,
@@ -664,6 +734,13 @@ def plot_all(result: Dict, output_dir: str = "."):
                                os.path.join(output_dir, "angular_distribution.png"))
     plot_e_star_spectrum(result,
                            os.path.join(output_dir, "e_star_spectrum.png"))
+    # α 旁观者动能分布 (核心输出): 图 + 数据文件
+    alpha = result.get('alpha_energy')
+    if alpha:
+        plot_alpha_energy_distribution(
+            alpha, os.path.join(output_dir, "alpha_energy_distribution.png"))
+        write_alpha_energy_distribution(
+            alpha, os.path.join(output_dir, "alpha_energy_distribution.txt"))
     # 若有多能量谱, 额外画二维频谱图 (含 E*_opt 曲线)
     if result.get('e_star_spectra'):
         plot_e_star_spectra_map(result['e_star_spectra'],

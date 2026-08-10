@@ -13,22 +13,21 @@ interactive.py — ⁷Li + ²³²Th 三体转移模型 交互式入口
 import argparse
 import sys
 
+# Windows 终端 (GBK 代码页) 下强制 UTF-8 输出, 避免上标字符 UnicodeEncodeError
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except (AttributeError, ValueError):
+    pass
+
 from li7_th232_main import main
 
-# 推荐模型 (第一级)
+# 转移模型 (唯一)
 MODELS = [
-    ("icf",   "ICF 占比校准 (默认, 推荐)"),
-    ("fermi", "费米积分: t-Th 俘获模型"),
+    ("icf",   "ICF 占比校准 (唯一模型)"),
 ]
 
-# 示意模型 (仅通过"其他"选入; 绝对标度未标定, 只适合看形状)
-SCHEMATIC_MODELS = [
-    ("tunneling", "简单指数隧穿"),
-    ("qwindow",   "Q 窗口隧穿"),
-    ("dwba",      "半经典 DWBA"),
-]
-
-ALL_MODELS = MODELS + SCHEMATIC_MODELS
+ALL_MODELS = MODELS
 
 ENERGY_MODES = [
     ("默认范围",   "E_lab 20-40 MeV, 步长 2"),
@@ -93,15 +92,9 @@ def run():
     print("=" * 62)
     print()
 
-    # 1. 模型 (两级: 推荐模型 + "其他"示意模型)
-    mi = _choice("选择转移模型:", MODELS + [("其他", "示意模型 (tunneling/qwindow/dwba)")], default=0)
-    if mi < len(MODELS):
-        model = MODELS[mi][0]
-    else:
-        print()
-        print("  ⚠ 以下为示意模型, 绝对标度未标定 (P₀/D₀ 经验值), 仅适合看形状。")
-        si = _choice("选择示意模型:", SCHEMATIC_MODELS, default=0)
-        model = SCHEMATIC_MODELS[si][0]
+    # 1. 模型 (唯一: icf)
+    mi = _choice("选择转移模型:", MODELS, default=0)
+    model = MODELS[mi][0]
 
     # 2. 快速测试?
     quick = _yesno("快速测试模式? (减少抽样/级联数)", default=False)

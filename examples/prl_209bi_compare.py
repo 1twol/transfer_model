@@ -29,6 +29,13 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Windows 终端 (GBK 代码页) 下强制 UTF-8 输出
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except (AttributeError, ValueError):
+    pass
+
 from model import config
 from model.config import make_system_bismuth
 from model.transfer import create_model

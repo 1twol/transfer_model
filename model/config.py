@@ -172,6 +172,11 @@ class ModelParams:
     k_fermi_manual: float = 0.65      # fm⁻¹, 对应 ~ 128 MeV/c
     sigma_k_manual: float = 0.30      # fm⁻¹
 
+    # --- α-t 相对距离分布 (破裂点 D + r_αt) ---
+    # 高斯宽度: 束缚态尺度 ~1/κ≈2.2 fm (κ=√(2μBE)/ħ), p-wave 峰在 1-2 fm,
+    # <r_αt> ≈ 3-4 fm
+    sigma_r_alpha_t: float = 2.5      # fm
+
     # --- 转移振幅 ---
     use_zero_range: bool = True        # True=零程DWBA, False=有限程
     d0: float = 0.0                   # 零程常数 (MeV·fm³/²), 0=从WF估算

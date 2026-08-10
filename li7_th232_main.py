@@ -37,24 +37,29 @@ import numpy as np
 # 将父目录加入 path (支持直接运行)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+# Windows 终端 (GBK 代码页) 下强制 UTF-8 输出, 避免上标字符 UnicodeEncodeError
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except (AttributeError, ValueError):
+    pass
+
 from model import config
-from model.structure import FermiMomentumSampler
-from model.kinematics import (grazing_angle, grazing_angular_momentum,
-                               rutherford_trajectory)
-from model.potentials import (woods_saxon, coulomb_uniform_sphere,
-                                total_potential, find_barrier)
-from model.transfer import (TunnelingModel, QWindowTunnelingModel,
-                               FermiIntegratedModel, create_model)
+from model.kinematics import grazing_angle
+from model.transfer import create_model
 from model.cross_section import (compute_excitation_function,
                                     compute_angular_distribution,
                                     compute_excitation_energy_spectrum,
                                     compute_alpha_double_differential,
+                                    compute_alpha_energy_distribution,
                                     compute_full)
 from post_process import (generate_pace4_from_spectrum, generate_pace4_single,
                           generate_eexcn_table, plot_all,
                           plot_e_star_spec_to_file, plot_e_star_spectra_map,
                           plot_alpha_double_diff,
-                          plot_angular_distribution_to_file)
+                          plot_angular_distribution_to_file,
+                          plot_alpha_energy_distribution,
+                          write_alpha_energy_distribution)
 
 _sys = config.system
 _mod = config.model
@@ -91,7 +96,7 @@ def print_system_info():
     print("  [模型参数]")
     print(f"    半径参数 r₀={_mod.r0} fm, 弥散 a₀={_mod.a0} fm")
     print(f"    零程常数 D₀={_mod.d0_manual} MeV·fm³/²")
-    print(f"    费米动量 σ_k≈{_mod.sigma_k_manual:.2f} fm⁻¹ (手动)")
+    print(f"    费米动量 σ_k≈{_mod.sigma_k_manual:.2f} fm^-1 (手动)")
     print(f"    b 网格: {_mod.n_b} 点, E* bin: 50")
     print()
 
@@ -173,8 +178,17 @@ def generate_pace4_for_energies(model, e_lab_list, exc_result,
         plot_angular_distribution_to_file(
             ang_ev, os.path.join(pace_dir, "angular_distribution.png"))
 
+        # α 旁观者动能分布 (核心输出): 数据文件 + 图
+        alpha_spec = compute_alpha_energy_distribution(
+            model, e_lab=e_lab, n_b=n_b, n_fermi=n_fermi_es, verbose=False)
+        write_alpha_energy_distribution(
+            alpha_spec, os.path.join(pace_dir, "alpha_energy_distribution.txt"))
+        plot_alpha_energy_distribution(
+            alpha_spec, os.path.join(pace_dir, "alpha_energy_distribution.png"))
+
         if verbose:
-            print(f"    <E*>={spec['e_star_mean']:.1f} MeV, "
+            print(f"    <E_α>={alpha_spec['e_alpha_mean']:.1f} MeV, "
+                  f"<E*>={spec['e_star_mean']:.1f} MeV, "
                   f"σ={meta['total_sigma_mb']:.4e} mb, "
                   f"{len(meta['files'])} files → {pace_dir}")
 
@@ -191,7 +205,7 @@ def generate_pace4_for_energies(model, e_lab_list, exc_result,
 
 def main(args=None):
     parser = argparse.ArgumentParser(
-        description="⁷Li+²³²Th 三体转移模型",
+        description="⁷Li+²³²Th 三体转移模型 (α 旁观者动能分布为核心输出)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
@@ -201,13 +215,9 @@ def main(args=None):
   %(prog)s --all                    # 所有能量点各生成 PACE4
   %(prog)s --all --no-plot          # 全能量 PACE4, 不画图
   %(prog)s --energy 25 40 5         # 自定义能量范围
-  %(prog)s --model fermi            # 费米动量积分模型
         """
     )
 
-    parser.add_argument('--model', type=str, default='icf',
-                        choices=['tunneling', 'qwindow', 'dwba', 'fermi', 'icf'],
-                        help='转移概率模型 (default: icf)')
     parser.add_argument('--energy', type=float, nargs=3,
                         metavar=('MIN', 'MAX', 'STEP'),
                         help='E_lab 范围 (MeV), 例: --energy 20 40 2')
@@ -258,7 +268,7 @@ def main(args=None):
 
     if args.output_dir is None:
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        args.output_dir = f"output_{args.model}_{timestamp}"
+        args.output_dir = f"output_icf_{timestamp}"
 
     os.makedirs(args.output_dir, exist_ok=True)
 
@@ -267,9 +277,9 @@ def main(args=None):
     print_kinematics_table(e_lab_range)
     print()
 
-    # ---- 创建模型 ----
-    print(f"  [模型] 使用 {args.model} 模型")
-    model = create_model(args.model)
+    # ---- 创建模型 (ICF 占比校准, 唯一模型) ----
+    print("  [模型] ICF 占比校准 (f_ICF = 0.25)")
+    model = create_model("icf")
     print()
 
     # ---- 计算 ----
@@ -313,6 +323,19 @@ def main(args=None):
         print(f"    标准差   = {spec.get('e_star_std', 0):.2f} MeV")
         print(f"    Q_capture = {spec.get('q_capture', 0):.2f} MeV")
 
+    alpha = result.get('alpha_energy', {})
+    if alpha:
+        print(f"\n  [α 旁观者动能分布 (中位能量)]")
+        print(f"    平均 E_α = {alpha.get('e_alpha_mean', 0):.2f} MeV")
+        print(f"    标准差   = {alpha.get('e_alpha_std', 0):.2f} MeV")
+        if spec:
+            m_alpha = _sys.spectator.mass_MeV
+            m_pa = _sys.product.mass_MeV
+            lhs = alpha['e_alpha_mean'] * (1.0 + m_alpha / m_pa) + spec['e_star_mean']
+            rhs = alpha['e_cm'] + _sys.q_total
+            print(f"    能量自洽: <E_α>(1+m_α/m_Pa)+<E*> = {lhs:.2f} MeV  "
+                  f"≈  E_cm+Q_total = {rhs:.2f} MeV")
+
     # ---- 画图 ----
     if not args.no_plot:
         print("\n  [画图]")
@@ -334,7 +357,7 @@ def main(args=None):
             specs = generate_pace4_for_energies(
                 model, e_lab_range, exc,
                 output_dir=os.path.join(args.output_dir, "Li7+Th232_icf"),
-                label_prefix=f"Li7+Th232 {args.model}",
+                label_prefix="Li7+Th232 icf",
                 cascades=args.cascades, facla=args.facla,
                 n_fermi=args.n_fermi, verbose=True
             )
@@ -354,10 +377,21 @@ def main(args=None):
             pace_dir = os.path.join(args.output_dir, f"Li7+Th232_E={e_lab:.0f}MeV")
             meta = generate_pace4_from_spectrum(
                 spec_e, e_cm=e_cm, output_dir=pace_dir,
-                label=f"Li7+Th232 {args.model} E={e_lab:.0f}MeV",
+                label=f"Li7+Th232 icf E={e_lab:.0f}MeV",
                 cascades=args.cascades, facla=args.facla, model=model
             )
-            print(f"    E* = {spec_e['e_star_mean']:.1f} MeV, "
+
+            # α 旁观者动能分布 (核心输出): 数据文件 + 图
+            alpha_e = compute_alpha_energy_distribution(
+                model, e_lab=e_lab, n_b=min(_mod.n_b, 40),
+                n_fermi=max(args.n_fermi, 2000), verbose=False)
+            write_alpha_energy_distribution(
+                alpha_e, os.path.join(pace_dir, "alpha_energy_distribution.txt"))
+            plot_alpha_energy_distribution(
+                alpha_e, os.path.join(pace_dir, "alpha_energy_distribution.png"))
+
+            print(f"    <E_α> = {alpha_e['e_alpha_mean']:.1f} MeV, "
+                  f"E* = {spec_e['e_star_mean']:.1f} MeV, "
                   f"σ = {meta['total_sigma_mb']:.4e} mb, "
                   f"{len(meta['files'])} files → {pace_dir}")
 
@@ -372,10 +406,21 @@ def main(args=None):
             pace_dir = os.path.join(args.output_dir, f"Li7+Th232_E={e_mid:.0f}MeV")
             meta = generate_pace4_from_spectrum(
                 spec, e_cm=e_cm_mid, output_dir=pace_dir,
-                label=f"Li7+Th232 {args.model} E={e_mid:.0f}MeV",
+                label=f"Li7+Th232 icf E={e_mid:.0f}MeV",
                 cascades=args.cascades, facla=args.facla, model=model
             )
-            print(f"    {len(meta['files'])} files → {pace_dir}")
+
+            # α 旁观者动能分布 (核心输出): 数据文件 + 图
+            alpha_e = compute_alpha_energy_distribution(
+                model, e_lab=e_mid, n_b=min(_mod.n_b, 40),
+                n_fermi=max(args.n_fermi, 2000), verbose=False)
+            write_alpha_energy_distribution(
+                alpha_e, os.path.join(pace_dir, "alpha_energy_distribution.txt"))
+            plot_alpha_energy_distribution(
+                alpha_e, os.path.join(pace_dir, "alpha_energy_distribution.png"))
+
+            print(f"    <E_α> = {alpha_e['e_alpha_mean']:.1f} MeV, "
+                  f"{len(meta['files'])} files → {pace_dir}")
             print(f"    [spin dist: sharp-cutoff L_g, not CCFULL partial waves]")
 
         # EEXCN 汇总表 (全能量; 未在上面的 PACE4 分支里算过 E* 谱的能量点, 补算)
@@ -395,7 +440,7 @@ def main(args=None):
     with open(result_path, 'w', encoding='utf-8') as f:
         f.write(f"# Three-Body Transfer Model Results\n")
         f.write(f"# Reaction: ⁷Li + ²³²Th → α + ²³⁵Pa* → ²³⁴Pa + n\n")
-        f.write(f"# Model: {args.model}\n")
+        f.write(f"# Model: icf (ICF fraction calibrated)\n")
         f.write(f"# Time: {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"#\n")
         if exc:
@@ -403,6 +448,12 @@ def main(args=None):
             f.write("# E_lab(MeV)  σ_tr(mb)  L_g(ħ)\n")
             for i in range(len(exc['e_lab'])):
                 f.write(f"  {exc['e_lab'][i]:.1f}  {exc['sigma'][i]:.6e}  {exc['l_g'][i]:.1f}\n")
+        alpha = result.get('alpha_energy', {})
+        if alpha:
+            f.write(f"#\n")
+            f.write(f"# Alpha spectator kinetic energy (mid energy E_lab={alpha['e_lab']:.0f} MeV)\n")
+            f.write(f"# <E_alpha> = {alpha['e_alpha_mean']:.2f} MeV, std = {alpha['e_alpha_std']:.2f} MeV\n")
+            f.write(f"# File: alpha_energy_distribution.txt\n")
     print(f"\n  结果文件: {result_path}")
 
     print(f"\n  所有输出保存在: {args.output_dir}")

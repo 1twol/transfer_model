@@ -176,39 +176,7 @@ def grazing_angular_momentum(e_cm: float, r_int: float = 0,
     return l_g
 
 # ============================================================
-# 3. 准自由事件相对动能
-# ============================================================
-
-def t_th_relative_energy(e_cm: float, k_mag: float, k_theta: float) -> Tuple[float, float]:
-    """t-²³²Th 准自由事件的相对动能与 ²³⁵Pa 激发能
-
-    E_rel = ½ μ_tTh |v_rel + v_t|², 其中
-      v_rel = √(2E_cm/μ_proj_targ) 是 ⁷Li-²³²Th 相对速度 (= 束流速度, 靶核静止)
-      v_t   = ħ·k/m_t 是 t 在 ⁷Li 内的费米速度
-
-    总质心系中 t 与 Th 的相对速度恰为 v_rel + v_t (Th 在总 CM 中反向运动,
-    伽利略变换下相对速度不变), 故实验室系与质心系结果一致。
-
-    Parameters
-    ----------
-    e_cm : 入射道质心系能量 (MeV)
-    k_mag : 费米动量大小 (fm⁻¹)
-    k_theta : 费米动量相对束流方向的角度 (弧度)
-
-    Returns
-    -------
-    e_rel : t-Th 相对动能 (MeV)
-    e_star : ²³⁵Pa 激发能 E* = Q_capture + E_rel (MeV)
-    """
-    v_rel = np.sqrt(2.0 * e_cm / config.system.mu_proj_targ)
-    v_t = config.HBARC * k_mag / config.system.cluster.mass_MeV
-    v_rel_sq = (v_rel + v_t * np.cos(k_theta))**2 + (v_t * np.sin(k_theta))**2
-    e_rel = 0.5 * config.system.mu_t_th * v_rel_sq
-    return e_rel, config.system.q_capture + e_rel
-
-
-# ============================================================
-# 4. 库仑后加速 (出口道)
+# 3. 库仑后加速 (出口道)
 # ============================================================
 
 def coulomb_recoil(r0, phi_p, vx, vy, z1: int, z2: int, m: float):
@@ -271,7 +239,7 @@ def coulomb_recoil(r0, phi_p, vx, vy, z1: int, z2: int, m: float):
     return theta_out, e_out
 
 # ============================================================
-# 5. 角度依赖 (实验室系 ↔ 质心系)
+# 4. 角度依赖 (实验室系 ↔ 质心系)
 # ============================================================
 
 def cm_to_lab(theta_cm: float, e_cm: float,

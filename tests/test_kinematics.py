@@ -6,6 +6,13 @@ import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
+# Windows 终端 (GBK 代码页) 下强制 UTF-8 输出
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stderr.reconfigure(encoding='utf-8')
+except (AttributeError, ValueError):
+    pass
+
 import numpy as np
 import model.config as config
 from model.kinematics import (rutherford_trajectory,

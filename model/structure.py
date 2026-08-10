@@ -127,9 +127,17 @@ def shooting_eigenvalue(r: np.ndarray, v0: float, r0_ws: float, a_ws: float,
                          e_guess: float = -2.0,
                          n_nodes_target: int = 1,
                          tol: float = 1e-8, max_iter: int = 100) -> Tuple[float, np.ndarray, int]:
-    """打靶法求束缚态能量本征值
+    """打靶法求束缚态能量本征值 (末点过零扫描 + 节点数匹配)
 
-    利用 Numerov 向外积分 + [E=0 at rmax] 边界条件
+    束缚态边界条件 u(r_max) = 0。对固定 r_max (渐近区), u 在 r_max 处
+    的符号随 E 扫过每个本征能量翻转一次, 所以:
+
+      1. 扫描 E ∈ [-100, -0.01] 找 u(r_max) 符号翻转区间 (每个翻转 = 一个束缚态);
+      2. 按翻转区间的波函数节点数匹配 n_nodes_target (节点数随 E 变浅而减少);
+      3. 在匹配区间二分, 使 u(r_max) 精确过零。
+
+    注意: 旧的"节点数+末点符号"判据对 ℓ≠0 会收敛到阱底以下的发散假解
+    (E=-100, 波函数指数增长), 已被本算法替代。
 
     Parameters
     ----------
@@ -147,58 +155,66 @@ def shooting_eigenvalue(r: np.ndarray, v0: float, r0_ws: float, a_ws: float,
     -------
     energy : 本征能量 (MeV)
     u : 波函数 (未归一化)
-    n_nodes : 实际节点数
+    n_nodes : 实际节点数 (V0 太浅无匹配态时 < n_nodes_target)
     """
-    dr = r[1] - r[0]
-    v_eff = effective_potential(r, v0, r0_ws, a_ws, z1, z2, l_val, mu)
+    n = len(r)
+    n_max = n - 1
 
-    # 找经典转折点 (V_eff(r) = E 的位置)
-    # 对于束缚态 E < 0, 有内外两个转折点
+    def _solve(e: float):
+        """积分到能量 e, 返回 (u 在 r_max 的符号, u)。发散解 (numerov 爆炸被
+        截断) 用最后一个非零点的符号代替 (衰减到 0 的解不会被截断)。"""
+        u = numerov_wavefunction(r, e, v0, r0_ws, a_ws, z1, z2, l_val, mu)
+        nz = np.count_nonzero(u)
+        if nz >= n - 5:
+            return np.sign(u[-1]), u
+        return np.sign(u[nz - 1]), u
 
-    e_low = -100.0   # 阱底下限
-    e_high = -0.01   # 略低于0 (束缚态)
+    def _count_nodes(u: np.ndarray) -> int:
+        return int(np.sum(np.diff(np.sign(u[:-1] * u[1:])) < 0))
 
-    # 二分法搜索
-    for iteration in range(max_iter):
-        e_mid = (e_low + e_high) / 2.0
-        u = numerov_wavefunction(r, e_mid, v0, r0_ws, a_ws, z1, z2, l_val, mu)
+    # ---- 1. 扫描找符号翻转 (每个翻转 = 一个束缚态) ----
+    e_scan = np.linspace(-100.0, -0.01, 160)
+    signs = np.array([_solve(e)[0] for e in e_scan])
+    flips = np.where(signs[:-1] != signs[1:])[0]
 
-        # 数节点数
-        n_nodes = np.sum(np.diff(np.sign(u[:-1] * u[1:])) < 0)
+    # 束缚态集中在 E ≈ -BE 附近 (浅区); 粗扫不足时在浅区加密
+    if len(flips) <= n_nodes_target:
+        e_scan = np.linspace(-10.0, -0.01, 400)
+        signs = np.array([_solve(e)[0] for e in e_scan])
+        flips = np.where(signs[:-1] != signs[1:])[0]
 
-        # 在 r_max 处的外推
-        r_max_idx = len(r) - 1
-        while r_max_idx > 10 and abs(u[r_max_idx]) < 1e-30:
-            r_max_idx -= 1
+    # ---- 2. 按节点数匹配目标态 (节点数随 E 变浅而减少) ----
+    candidates = []
+    for fi in flips:
+        e_mid = 0.5 * (e_scan[fi] + e_scan[fi + 1])
+        _, u_mid = _solve(e_mid)
+        candidates.append((fi, _count_nodes(u_mid)))
 
-        # 判断: 如果波函数在 r_max 处上翘(+), E 偏高;下翘(-),E 偏低
-        # 更稳健的判断: 看最后几点的符号
-        if r_max_idx < 50:
-            # 波函数衰减太快, 尝试提高 E
-            e_low = e_mid
-            continue
+    matched = [fi for fi, nn in candidates if nn == n_nodes_target]
+    if not matched:
+        # V0 太浅, 不存在 n_nodes_target 节点态: 返回近 0 能量 + 实际节点数
+        u_hi = numerov_wavefunction(r, -0.01, v0, r0_ws, a_ws, z1, z2, l_val, mu)
+        return -0.01, u_hi, _count_nodes(u_hi)
 
-        sign = np.sign(u[r_max_idx])
+    # 同节点数若多个, 取最深 (扫描顺序最前)
+    idx = matched[0]
 
-        if n_nodes < n_nodes_target:
-            e_low = e_mid
-        elif n_nodes > n_nodes_target:
-            e_high = e_mid
+    # ---- 3. 二分使 u(r_max) 过零 ----
+    e_a, e_b = e_scan[idx], e_scan[idx + 1]
+    s_a = signs[idx]
+    for _ in range(max_iter):
+        e_mid = 0.5 * (e_a + e_b)
+        s_m, _ = _solve(e_mid)
+        if s_m == s_a:
+            e_a = e_mid
         else:
-            # 节点数对了, 根据渐近行为微调
-            if sign > 0:
-                e_high = e_mid
-            else:
-                e_low = e_mid
-
-        if e_high - e_low < tol:
+            e_b = e_mid
+        if e_b - e_a < tol:
             break
 
-    energy = (e_low + e_high) / 2.0
+    energy = 0.5 * (e_a + e_b)
     u_final = numerov_wavefunction(r, energy, v0, r0_ws, a_ws, z1, z2, l_val, mu)
-    n_nodes_final = np.sum(np.diff(np.sign(u_final[:-1] * u_final[1:])) < 0)
-
-    return energy, u_final, n_nodes_final
+    return energy, u_final, _count_nodes(u_final)
 
 
 def solve_bound_state(r_grid: np.ndarray, v0: float, r0_ws: float, a_ws: float,
@@ -408,8 +424,8 @@ class FermiMomentumSampler:
             target_be=be, n_nodes=self.n_nodes
         )
 
-        print(f"  [structure] α-t bound state (ℓ={self.l_val}): V₀={v0_final:.1f} MeV, "
-              f"BE={be:.3f} MeV")
+        print(f"  [structure] alpha-t bound state (l={self.l_val}): "
+              f"V0={v0_final:.1f} MeV, BE={be:.3f} MeV")
 
         # Fourier 变换
         k_max = 3.0  # fm⁻¹
@@ -437,7 +453,7 @@ class FermiMomentumSampler:
         self._sigma_k = estimate_sigma_k(be, _sys.mu_alpha_t)
         if self._sigma_k <= 0 or self._sigma_k == 0:
             self._sigma_k = _mod.sigma_k_manual
-        print(f"  [structure] Gaussian momentum dist: σ_k≈{self._sigma_k:.3f} fm⁻¹ "
+        print(f"  [structure] Gaussian momentum dist: sigma_k≈{self._sigma_k:.3f} fm^-1 "
               f"(BE={be:.3f} MeV)")
 
         # 预计算分布
@@ -484,6 +500,66 @@ class FermiMomentumSampler:
     @property
     def sigma_k(self) -> float:
         return self._sigma_k
+
+
+# ============================================================
+# 4b. α-t 相对距离抽样器 (破裂点 D + r_αt)
+# ============================================================
+
+class AlphaTRadiusSampler:
+    """⁷Li 内 α-t 相对距离 r_αt 抽样器
+
+    α 在破裂点的库仑势能取决于 α 到靶核的距离, 约等于近点距离 D(b)
+    加 α-t 内部间距 r_αt。r_αt 从束缚态坐标波函数的高斯近似抽样:
+
+      3D 球壳分布 P(r) dr ∝ r²·e^{−r²/2σ_r²} dr
+
+    σ_r = config.sigma_r_alpha_t (默认 2.5 fm, 束缚态尺度 ~1/κ≈2.2 fm,
+    p-wave 峰在 1-2 fm → <r_αt> ≈ 3-4 fm)。库仑后加速增益 C₁/(D+r_αt)
+    随 r_αt 涨落, 使 E_α 分布展宽。
+
+    注: 该几何下的 Numerov 束缚态解 (v0_alpha_t/r0_alpha_t/a_alpha_t 组合)
+    在浅阱区不可靠 (0 节点态缺失), 故用高斯近似。
+    """
+
+    def __init__(self):
+        self._r_grid = None
+        self._cdf_interpolator = None
+        self._mean_r = None
+        self._setup_distribution()
+
+    def _setup_distribution(self):
+        sigma_r = _mod.sigma_r_alpha_t
+
+        r_max = 20.0
+        n_r = 2000
+        r = np.linspace(0.01, r_max, n_r)
+
+        dist = r**2 * np.exp(-r**2 / (2.0 * sigma_r**2))
+
+        cdf = np.cumsum(dist) * (r[1] - r[0])
+        if cdf[-1] < 1e-30:
+            raise RuntimeError("AlphaTRadiusSampler: 波函数分布积分为零")
+        cdf = cdf / cdf[-1]
+
+        self._r_grid = r
+        self._cdf = cdf
+        self._cdf_interpolator = interp1d(cdf, r, kind='linear',
+                                          bounds_error=False,
+                                          fill_value=(r[0], r[-1]))
+
+        # 平均 α-t 间距 <r> (诊断用)
+        dr = r[1] - r[0]
+        self._mean_r = np.trapezoid(r * dist, r) / np.trapezoid(dist, r)
+
+    def sample(self, n: int) -> np.ndarray:
+        """逆变换抽样 r_αt (fm)"""
+        u = np.random.uniform(0.001, 0.999, n)
+        return self._cdf_interpolator(u)
+
+    @property
+    def mean_r(self) -> float:
+        return self._mean_r
 
 
 # ============================================================
