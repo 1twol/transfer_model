@@ -105,11 +105,14 @@ def main():
             os.makedirs(args.outdir, exist_ok=True)
 
             fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5.5))
-            # 双微分热图
-            logz = np.log10(np.maximum(ds, 1e-30))
-            mesh = ax1.pcolormesh(d2['theta_alpha_deg'], d2['e_alpha'], logz,
-                                  shading='auto', cmap='viridis')
-            fig.colorbar(mesh, ax=ax1, label="log10(d²σ/dE_α dΩ_α) [mb/sr/MeV]")
+            # 双微分热图 (对数色标, 刻度幂值 10⁻³, 10⁻², ..., PRL Fig.1 风格)
+            from matplotlib.colors import LogNorm
+            ds_pos = ds[ds > 0]
+            vmin = max(float(np.min(ds_pos)) if ds_pos.size else 1e-3, 1e-6)
+            mesh = ax1.pcolormesh(d2['theta_alpha_deg'], d2['e_alpha'], ds,
+                                  shading='auto', cmap='viridis',
+                                  norm=LogNorm(vmin=vmin, vmax=float(np.max(ds))))
+            fig.colorbar(mesh, ax=ax1, label="d²σ/dE_α dΩ_α (mb/sr/MeV)")
             ax1.set_xlabel("θ_α (deg)")
             ax1.set_ylabel("E_α (MeV)")
             ax1.set_title(f"Model α double-diff (E_cm={E_CM_PRL} MeV)")

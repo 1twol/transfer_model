@@ -547,11 +547,16 @@ def plot_alpha_double_diff(result: Dict, output_path: str = None,
     ea = result['e_alpha']
     d2s = result['d2sigma']
 
+    from matplotlib.colors import LogNorm
     fig, ax = plt.subplots(1, 1, figsize=(9, 6))
-    logz = np.log10(np.maximum(d2s, 1e-30))
-    mesh = ax.pcolormesh(th, ea, logz, shading='auto', cmap='viridis')
+    # 对数色标: 刻度自动为幂值 (10⁻³, 10⁻², 10⁻¹, 1, 10, PRL Fig.1 风格),
+    # 标签不写 log; 范围按数据自适应 (不写死)
+    d2s_pos = d2s[d2s > 0]
+    vmin = max(float(np.min(d2s_pos)) if d2s_pos.size else 1e-3, 1e-6)
+    mesh = ax.pcolormesh(th, ea, d2s, shading='auto', cmap='viridis',
+                         norm=LogNorm(vmin=vmin, vmax=float(np.max(d2s))))
     cbar = fig.colorbar(mesh, ax=ax)
-    cbar.set_label("log10(d²σ/dE_α dΩ_α) [mb/sr/MeV]")
+    cbar.set_label("d²σ/dE_α dΩ_α (mb/sr/MeV)")
 
     ax.set_xlabel("θ_α (deg)")
     ax.set_ylabel("E_α (MeV)")
