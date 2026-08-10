@@ -19,7 +19,6 @@ from . import config
 _sys = config.system
 _mod = config.model
 
-
 # ============================================================
 # 1. 卢瑟福散射轨道
 # ============================================================
@@ -33,7 +32,6 @@ class RutherfordTrajectory(NamedTuple):
     theta_cm: float      # 质心系散射角 (弧度)
     a_half: float        # 半长轴 = η/k
     eccentricity: float  # 离心率 e = √(1 + (b/a)²)
-
 
 def rutherford_trajectory(e_cm: float, b: float,
                            z1: int, z2: int, mu: float) -> RutherfordTrajectory:
@@ -71,7 +69,6 @@ def rutherford_trajectory(e_cm: float, b: float,
         a_half=a_half, eccentricity=eccentricity
     )
 
-
 def impact_parameter_from_angle(theta_cm: float, e_cm: float,
                                   z1: int, z2: int, mu: float) -> float:
     """从质心系散射角反推碰撞参数
@@ -81,7 +78,6 @@ def impact_parameter_from_angle(theta_cm: float, e_cm: float,
     eta = config.sommerfeld(z1, z2, mu, e_cm)
     k = config.wavenumber(mu, e_cm)
     return eta / k / np.tan(theta_cm / 2.0)
-
 
 # ============================================================
 # 2. 擦边角与擦边角动量
@@ -147,7 +143,6 @@ def grazing_angle(e_cm: float, r_int: float = 0,
 
     return theta_g_cm, theta_g_lab, l_g
 
-
 def grazing_angular_momentum(e_cm: float, r_int: float = 0,
                               z1: int = None, z2: int = None) -> float:
     """仅计算擦边角动量 L_g (ħ)
@@ -180,103 +175,9 @@ def grazing_angular_momentum(e_cm: float, r_int: float = 0,
 
     return l_g
 
-
 # ============================================================
-# 3. 三体 → 两体坐标变换
+# 3. 准自由事件相对动能
 # ============================================================
-
-def breakup_kinematics(e_cm: float, b: float,
-                        k_vec_cluster: np.ndarray,
-                        cluster_label: str = "t") -> dict:
-    """在转移瞬间的三体运动学
-
-    初始态: ⁷Li (速度 v_cm) 接近 ²³²Th (静止在 CM)
-    内部: α + t 以费米动量 k 相对运动
-
-    Parameters
-    ----------
-    e_cm : 质心系能量 (MeV)
-    b : 碰撞参数 (fm)
-    k_vec_cluster : 费米动量矢量 (k_mag, theta, phi) — t 相对 α
-    cluster_label : "t" 或 "α", 转移的团簇
-
-    Returns
-    -------
-    kin : 包含所有运动学量的字典
-    """
-    # 入射道运动学
-    traj = rutherford_trajectory(e_cm, b,
-                                  _sys.proj.Z, _sys.targ.Z,
-                                  _sys.mu_proj_targ)
-
-    # 入射道运动学
-    traj = rutherford_trajectory(e_cm, b,
-                                  _sys.proj.Z, _sys.targ.Z,
-                                  _sys.mu_proj_targ)
-
-    # v_rel: ⁷Li-²³²Th 相对速度 (c 单位), 靶核静止时即 ⁷Li 的实验室系速度
-    v_rel = config.HBARC * traj.k / _sys.mu_proj_targ
-    v_li = v_rel
-
-    # ⁷Li 内部: α-t 相对动量
-    k_mag, k_theta, k_phi = k_vec_cluster
-
-    # t 在 ⁷Li 内部的速度 (c 单位)
-    v_t_in_li = config.HBARC * k_mag / _sys.cluster.mass_MeV
-
-    # t 在 ⁷Li 内的速度分量 (各向同性方向)
-    v_t_li_x = v_t_in_li * np.cos(k_theta)
-    v_t_li_y = v_t_in_li * np.sin(k_theta) * np.cos(k_phi)
-    v_t_li_z = v_t_in_li * np.sin(k_theta) * np.sin(k_phi)
-
-    # t 在实验室系中的速度 (靶核静止, 用于计算 t+Th 相对动能)
-    v_t_lab_x = v_li + v_t_li_x
-    v_t_lab_y = v_t_li_y
-    v_t_lab_z = v_t_li_z
-    v_t_lab = np.sqrt(v_t_lab_x**2 + v_t_lab_y**2 + v_t_lab_z**2)
-
-    # t 在总 CM 系中的速度
-    v_t_cm_x = v_li + v_t_li_x
-    v_t_cm_y = v_t_li_y
-    v_t_cm_z = v_t_li_z
-    v_t_cm = np.sqrt(v_t_cm_x**2 + v_t_cm_y**2 + v_t_cm_z**2)
-
-    # t + ²³²Th 的相对动能 (靶核在实验室系静止)
-    e_rel_t_th = 0.5 * _sys.mu_t_th * v_t_lab**2
-
-    # 转移后: t 与 ²³²Th 结合 → ²³⁵Pa*
-    # ²³⁵Pa 的激发能 = Q_capture + E_rel(t-Th)
-    e_star_pa = _sys.q_capture + e_rel_t_th
-
-    # α 在实验室系/总 CM 中的速度 (动量守恒: m_α v_α_in_li = -m_t v_t_in_li)
-    v_alpha_lab_x = v_li - (_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_x
-    v_alpha_lab_y = -(_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_y
-    v_alpha_lab_z = -(_sys.cluster.mass_MeV / _sys.spectator.mass_MeV) * v_t_li_z
-    v_alpha_lab = np.sqrt(v_alpha_lab_x**2 + v_alpha_lab_y**2 + v_alpha_lab_z**2)
-
-    kin = {
-        'trajectory': traj,
-        'v_rel': v_rel,
-        'v_li': v_li,
-        'e_cm': e_cm,
-        'b': b,
-        # t 的运动学
-        'v_t_lab': v_t_lab,
-        'v_t_lab_vec': np.array([v_t_lab_x, v_t_lab_y, v_t_lab_z]),
-        'v_t_cm': v_t_cm,
-        'v_t_cm_vec': np.array([v_t_cm_x, v_t_cm_y, v_t_cm_z]),
-        'e_rel_t_th': e_rel_t_th,
-        'e_star_pa': e_star_pa,
-        # α 的运动学
-        'v_alpha_lab': v_alpha_lab,
-        'v_alpha_lab_vec': np.array([v_alpha_lab_x, v_alpha_lab_y, v_alpha_lab_z]),
-        # 出口道相对运动
-        'v_rel_alpha_pa': v_alpha_lab,  # 近似 (²³⁵Pa ~ 静止在实验室系)
-        'e_rel_alpha_pa': 0.5 * _sys.mu_alpha_pa * v_alpha_lab**2,
-    }
-
-    return kin
-
 
 def t_th_relative_energy(e_cm: float, k_mag: float, k_theta: float) -> Tuple[float, float]:
     """t-²³²Th 准自由事件的相对动能与 ²³⁵Pa 激发能
@@ -299,11 +200,11 @@ def t_th_relative_energy(e_cm: float, k_mag: float, k_theta: float) -> Tuple[flo
     e_rel : t-Th 相对动能 (MeV)
     e_star : ²³⁵Pa 激发能 E* = Q_capture + E_rel (MeV)
     """
-    v_rel = np.sqrt(2.0 * e_cm / _sys.mu_proj_targ)
-    v_t = config.HBARC * k_mag / _sys.cluster.mass_MeV
+    v_rel = np.sqrt(2.0 * e_cm / config.system.mu_proj_targ)
+    v_t = config.HBARC * k_mag / config.system.cluster.mass_MeV
     v_rel_sq = (v_rel + v_t * np.cos(k_theta))**2 + (v_t * np.sin(k_theta))**2
-    e_rel = 0.5 * _sys.mu_t_th * v_rel_sq
-    return e_rel, _sys.q_capture + e_rel
+    e_rel = 0.5 * config.system.mu_t_th * v_rel_sq
+    return e_rel, config.system.q_capture + e_rel
 
 
 # ============================================================
@@ -369,76 +270,6 @@ def coulomb_recoil(r0, phi_p, vx, vy, z1: int, z2: int, m: float):
     theta_out = np.where(ok, th, theta_out)
     return theta_out, e_out
 
-
-def post_acceleration(r_transfer: float, e_initial: float,
-                       z1: int = None, z2: int = None,
-                       mu: float = None,
-                       r_inf: float = 500.0) -> Tuple[float, float, float]:
-    """库仑后加速计算 (出口道分解工具)
-
-    在转移点 r = r_transfer 处, α 和 ²³⁵Pa 的初始相对动能
-    为 E_initial。在无穷远处, 相对动能增加了库仑排斥能:
-
-      E_final = E_initial + Z₁Z₂e² / r_transfer
-
-    出射角由卢瑟福轨道决定:
-      θ_out = 2 arctan(η_out / (k_out b_out))
-
-    注意: 主计算路径中 α-²³⁵Pa 的渐近动能由两体能量守恒给出
-    (T_rel(∞) = E_cm + Q_total − E*, 已含库仑后加速), 不需要调用本函数。
-    本函数用于单独分解转移点处的局域动能与库仑增益。
-
-    Parameters
-    ----------
-    r_transfer : 转移点距离 (fm)
-    e_initial : 出口道初始相对动能 (MeV)
-    z1, z2 : 核电荷数 (α 和 ²³⁵Pa)
-    mu : 出口道约化质量
-    r_inf : 无穷远近似距离 (fm)
-
-    Returns
-    -------
-    e_final : 无穷远相对动能 (MeV)
-    theta_out : 质心系出射角 (弧度)
-    v_final : 末态相对速度 (c 单位)
-    """
-    if z1 is None:
-        z1 = _sys.spectator.Z  # α: Z=2
-    if z2 is None:
-        z2 = _sys.product.Z    # ²³⁵Pa: Z=91
-    if mu is None:
-        mu = _sys.mu_alpha_pa
-
-    # 能量守恒
-    coulomb_energy = z1 * z2 * config.E2 / max(r_transfer, 1e-6)
-    e_final = e_initial + coulomb_energy
-
-    if e_final <= 0:
-        return 0.0, 0.0, 0.0
-
-    # 出口道卢瑟福轨道
-    eta_out = config.sommerfeld(z1, z2, mu, e_final)
-    k_out = config.wavenumber(mu, e_final)
-
-    # 出射角由最近接近距离反推
-    a_half_out = eta_out / k_out
-    # 对于排斥库仑势, 无穷远的渐近偏转角
-    # 出口道速度方向与转移时 α 的速度方向有关
-    # 简化: 用 r_transfer 作为最近接近距离, 反推出射角
-    if r_transfer > a_half_out:
-        ecc = r_transfer / a_half_out - 1.0
-        if ecc > 1e-6:
-            theta_out = 2.0 * np.arctan(1.0 / np.sqrt(ecc**2 - 1.0))
-        else:
-            theta_out = np.pi
-    else:
-        theta_out = np.pi / 2.0
-
-    v_final = config.HBARC * k_out / mu
-
-    return e_final, theta_out, v_final
-
-
 # ============================================================
 # 5. 角度依赖 (实验室系 ↔ 质心系)
 # ============================================================
@@ -491,41 +322,3 @@ def cm_to_lab(theta_cm: float, e_cm: float,
                                 2.0 * V * u * np.cos(theta_cm))
 
     return theta_lab, e_lab
-
-
-def lab_to_cm(theta_lab: float, e_lab: float,
-               m_ejectile: float, m_recoil: float,
-               q_value: float = 0.0,
-               m_proj: float = None, m_targ: float = None) -> Tuple[float, float]:
-    """实验室系角度 → 质心系 (近似反变换)
-
-    注: 严格反变换需要解非线性方程, 此处采用小质量比近似
-    (m_ej << m_rec), 对 α + 重核产物足够精确。
-    """
-    if m_proj is None:
-        m_proj = _sys.proj.mass_MeV
-    if m_targ is None:
-        m_targ = _sys.targ.mass_MeV
-
-    M_in = m_proj + m_targ
-    M_out = m_ejectile + m_recoil
-
-    # 先粗略估计 e_cm (忽略 V/u 项)
-    e_cm = e_lab * M_out / m_recoil - q_value
-    e_cm = max(e_cm, 0.01)
-
-    # 迭代一次使 lab 能量匹配
-    for _ in range(10):
-        V = np.sqrt(2.0 * e_cm / M_in) * np.sqrt(m_targ / m_proj)
-        T_ej_cm = (e_cm + q_value) * m_recoil / M_out
-        u = np.sqrt(2.0 * T_ej_cm / m_ejectile)
-        e_lab_calc = 0.5 * m_ejectile * (
-            V**2 + u**2 + 2.0 * V * u * np.cos(theta_lab))
-        # 用差分校正 e_cm
-        e_cm_new = e_cm * e_lab / max(e_lab_calc, 1e-6)
-        if abs(e_cm_new - e_cm) < 1e-4:
-            break
-        e_cm = e_cm_new
-
-    theta_cm = theta_lab
-    return theta_cm, e_cm

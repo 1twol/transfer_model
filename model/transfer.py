@@ -28,7 +28,6 @@ from .structure import FermiMomentumSampler
 _sys = config.system
 _mod = config.model
 
-
 # ============================================================
 # 1. 转移概率模型基类
 # ============================================================
@@ -50,24 +49,6 @@ class TransferModel:
         """转移概率 P(b) 在给定碰撞参数下"""
         raise NotImplementedError
 
-    def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
-        """转移概率作为散射角的函数"""
-        raise NotImplementedError
-
-    def average_over_fermi(self, e_cm: float, b: float, n_samples: int = 1000) -> float:
-        """对费米动量取平均的转移概率
-
-        ⟨P⟩ = ∫ d³k P(k) × P_tr(b, k)
-        """
-        k_mag, k_theta, k_phi = self.fermi_sampler.sample(n_samples)
-        p_total = 0.0
-
-        for i in range(n_samples):
-            k_vec = (k_mag[i], k_theta[i], k_phi[i])
-            p_total += self.probability(e_cm, b, k_vec=k_vec)
-
-        return p_total / n_samples
-
     def event_distribution(self, e_cm: float, b: float, n_samples: int):
         """抽样费米事件, 返回每个事件的 (k_mag, k_theta, p_event, e_star) 数组
 
@@ -84,7 +65,6 @@ class TransferModel:
             p[i] = self.probability(e_cm, b, k_vec=(k_mag[i], k_theta[i], k_phi[i]))
             es[i] = t_th_relative_energy(e_cm, k_mag[i], k_theta[i])[1]
         return k_mag, k_theta, p, es
-
 
 # ============================================================
 # 2. 指数隧穿模型 (最简单)
@@ -117,15 +97,6 @@ class TunnelingModel(TransferModel):
             config.system.proj.Z, config.system.targ.Z, config.system.mu_proj_targ, e_cm, b
         )
         return self.p0 * np.exp(-2.0 * self.kappa * d)
-
-    def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
-        """角度依赖的转移概率"""
-        from .kinematics import impact_parameter_from_angle
-        b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         config.system.proj.Z, config.system.targ.Z,
-                                         config.system.mu_proj_targ)
-        return self.probability(e_cm, b)
-
 
 # ============================================================
 # 3. Q 值窗口修正隧穿模型
@@ -200,14 +171,6 @@ class QWindowTunnelingModel(TransferModel):
         p_q = np.exp(-(e_star - e_star_opt)**2 / (2.0 * self.gamma_q**2))
 
         return self.p0 * p_tunnel * p_q
-
-    def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
-        from .kinematics import impact_parameter_from_angle
-        b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         config.system.proj.Z, config.system.targ.Z,
-                                         config.system.mu_proj_targ)
-        return self.probability(e_cm, b, **kwargs)
-
 
 # ============================================================
 # 4. 半经典 DWBA-lite 转移模型
@@ -315,14 +278,7 @@ class SemiclassicalTransferModel(TransferModel):
         else:
             # 经典禁止区: 返回虚波数
             return -np.sqrt(2.0 * mu * abs(diff)) / config.HBARC
-
-    def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
-        from .kinematics import impact_parameter_from_angle
-        b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         config.system.proj.Z, config.system.targ.Z,
-                                         config.system.mu_proj_targ)
         return self.probability(e_cm, b, **kwargs)
-
 
 # ============================================================
 # 5. 包含费米动量积分的完整隧穿模型
@@ -483,14 +439,7 @@ class FermiIntegratedModel(TransferModel):
                                       return_details=True)
         return (np.asarray(details['k_mag']), np.asarray(details['k_theta']),
                 np.asarray(details['probabilities']), np.asarray(details['e_star']))
-
-    def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
-        from .kinematics import impact_parameter_from_angle
-        b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         config.system.proj.Z, config.system.targ.Z,
-                                         config.system.mu_proj_targ)
         return self.probability(e_cm, b, **kwargs)
-
 
 # ============================================================
 # 6. ICF 占比校准模型 (推荐用于垒上能区)
@@ -613,14 +562,7 @@ class ICFFractionModel(TransferModel):
                                       return_details=True)
         return (np.asarray(details['k_mag']), np.asarray(details['k_theta']),
                 np.asarray(details['probabilities']), np.asarray(details['e_star']))
-
-    def probability_angle(self, e_cm: float, theta_cm: float, **kwargs) -> float:
-        from .kinematics import impact_parameter_from_angle
-        b = impact_parameter_from_angle(theta_cm, e_cm,
-                                         config.system.proj.Z, config.system.targ.Z,
-                                         config.system.mu_proj_targ)
         return self.probability(e_cm, b, **kwargs)
-
 
 # ============================================================
 # 7. 转移概率工厂函数
