@@ -49,10 +49,11 @@ class TransferModel:
         raise NotImplementedError
 
     def event_distribution(self, e_cm: float, b: float, n_samples: int):
-        """抽样费米事件, 返回 (k_mag, k_theta, p) 数组
+        """抽样费米事件, 返回 (k_mag, k_theta, k_phi, p) 数组
 
-        p 是单个费米事件的转移概率。ICF 模型 P 与 k 无关, p 恒为 P(b)。
-        E* 等运动学量由 cross_section._event_physics 统一计算 (能量守恒口径)。
+        p 是单个费米事件的基础转移概率。ICF 模型的 P_base = T·f_ICF·p_geo
+        与 k 无关, p 恒为 P_base; 破裂点局部俘获概率 P_cap(E_rel(R*)) 由
+        cross_section._event_physics 计算并乘入 (含位置/费米动量依赖)。
         """
         raise NotImplementedError
 
@@ -128,10 +129,10 @@ class ICFFractionModel(TransferModel):
         return self._p_base(e_cm, b)
 
     def event_distribution(self, e_cm: float, b: float, n_samples: int):
-        """ICF 的 P 与费米 k 无关, 每个事件概率恒为 P(b)"""
-        k_mag, k_theta, _ = self.fermi_sampler.sample(n_samples)
+        """ICF 的 P_base 与费米 k 无关, 每个事件概率恒为 P_base"""
+        k_mag, k_theta, k_phi = self.fermi_sampler.sample(n_samples)
         p = np.full(n_samples, self._p_base(e_cm, b))
-        return k_mag, k_theta, p
+        return k_mag, k_theta, k_phi, p
 
 
 # ============================================================

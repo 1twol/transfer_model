@@ -552,7 +552,19 @@ def plot_alpha_double_diff(result: Dict, output_path: str = None,
     # 对数色标: 刻度自动为幂值 (10⁻³, 10⁻², 10⁻¹, 1, 10, PRL Fig.1 风格),
     # 标签不写 log; 范围按数据自适应 (不写死)
     d2s_pos = d2s[d2s > 0]
-    vmin = max(float(np.min(d2s_pos)) if d2s_pos.size else 1e-3, 1e-6)
+    if not d2s_pos.size:
+        # 全零截面 (如垒下无破裂事件): 空热图
+        ax.text(0.5, 0.5, "σ ≈ 0 (no breakup events)", ha='center',
+                va='center', transform=ax.transAxes)
+        ax.set_xlabel("θ_α (deg)")
+        ax.set_ylabel("E_α (MeV)")
+        ax.set_title(f"α spectator double-diff. E_lab={result.get('e_lab', 0):.0f} MeV")
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+        print(f"  [plot] α 双微分热图 → {output_path} (all-zero)")
+        return
+    vmin = max(float(np.min(d2s_pos)), 1e-6)
     mesh = ax.pcolormesh(th, ea, d2s, shading='auto', cmap='viridis',
                          norm=LogNorm(vmin=vmin, vmax=float(np.max(d2s))))
     cbar = fig.colorbar(mesh, ax=ax)

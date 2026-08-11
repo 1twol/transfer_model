@@ -536,6 +536,9 @@ class AlphaTRadiusSampler:
         r = np.linspace(0.01, r_max, n_r)
 
         dist = r**2 * np.exp(-r**2 / (2.0 * sigma_r**2))
+        # 截断 4σ: 束缚波函数尾部短, 极端 r_αt (对应 b 很大的切向动能放大)
+        # 在物理上无贡献, 只污染分布轴
+        dist = np.where(r <= 4.0 * sigma_r, dist, 0.0)
 
         cdf = np.cumsum(dist) * (r[1] - r[0])
         if cdf[-1] < 1e-30:
@@ -553,9 +556,21 @@ class AlphaTRadiusSampler:
         self._mean_r = np.trapezoid(r * dist, r) / np.trapezoid(dist, r)
 
     def sample(self, n: int) -> np.ndarray:
-        """逆变换抽样 r_αt (fm)"""
+        """逆变换抽样 r_αt 大小 (fm)"""
         u = np.random.uniform(0.001, 0.999, n)
         return self._cdf_interpolator(u)
+
+    def sample_3d(self, n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """抽样 r_αt 三维矢量: (r_mag, theta, phi), 方向各向同性
+
+        t 相对 ⁷Li 质心位移 d_t = (m_α/M)·r⃗_αt, α 相对质心 d_α = −(m_t/M)·r⃗_αt,
+        方向耦合 (t 朝 Th / α 朝 Th) 由调用方用 theta 与轨道径向比对得到。
+        """
+        r_mag = self.sample(n)
+        cos_theta = np.random.uniform(-1.0, 1.0, n)
+        theta = np.arccos(cos_theta)
+        phi = np.random.uniform(0.0, 2.0 * np.pi, n)
+        return r_mag, theta, phi
 
     @property
     def mean_r(self) -> float:

@@ -57,6 +57,18 @@ def make_b_grid(e_cm: float, n_b: int = None, b_max: float = None) -> np.ndarray
     return b_grid
 
 
+def _weighted_percentiles(data: np.ndarray, weights: np.ndarray,
+                           percents: list) -> list:
+    """截面加权分位 (排序 + 权重累积)"""
+    order = np.argsort(data)
+    data_s, w_s = data[order], np.asarray(weights)[order]
+    cdf = np.cumsum(w_s)
+    if cdf[-1] <= 0:
+        return [np.percentile(data, p) for p in percents]
+    cdf = cdf / cdf[-1]
+    return [float(np.interp(p / 100.0, cdf, data_s)) for p in percents]
+
+
 def _b_quadrature_weights(b_grid: np.ndarray) -> np.ndarray:
     """非均匀 b 网格的梯形求积权重 (端点半宽, 内部全宽)"""
     b_w = np.zeros_like(b_grid)
@@ -75,18 +87,6 @@ def _exclude_head_on(b_grid: np.ndarray, e_cm: float) -> np.ndarray:
     return b_cut
 
 
-def _near_point_geometry(e_cm: float, b: float) -> Tuple[float, float]:
-    """入射道卢瑟福轨道近点: 距离 D(b) 与近点方向角 φ_p (rad, 相对束流)
-
-    近点始终在束流前方 (+x 轴, φ_p=0), 与 b 无关: 入射轨迹 r(θ)=p/(e·cosθ−1)
-    的近点 (r 最小) 在 θ=0 即 +x 方向。近点切向速度方向恒为 +y (对 b>0,
-    7Li 从 y=−b 入射绕行到束流前方)。
-    """
-    d = config.distance_of_closest_approach(config.system.proj.Z, config.system.targ.Z,
-                                            config.system.mu_proj_targ, e_cm, b)
-    return d, 0.0
-
-
 def _alpha_b_min(e_cm: float) -> float:
     """近正碰下界: 近点进入核区 (D(b) < R_int) 的 7Li 被完全融合吸收,
     不产生可测的旁观者 α。解 D(b_min) = R_int:
@@ -99,90 +99,165 @@ def _alpha_b_min(e_cm: float) -> float:
     return np.sqrt(max(r_int * r_int - 2.0 * a * r_int, 0.0))
 
 
-def _alpha_velocity(e_cm: float, b: float, k_mag, k_theta,
-                    r_alphat=None) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """α 旁观者的初始速度 (近点切向推进 + 费米) 与库仑传播结果
+# ============================================================
+# 破裂几何: 轨道上 t–Th 首次到达俘获半径 R_cap
+# ============================================================
 
-    α 在破裂点 (D + r_αt, φ_p) 继承 ⁷Li 的近点切向速度 v_near = b·v_∞/D
-    (角动量守恒, 非渐近速度 v_∞——近点处 7Li 大部分动能已转为库仑势能),
-    叠加上 7Li 静止系内与 t 反向的费米速度, 再经 coulomb_recoil 传播到
-    无穷远。破裂点距离 = 库仑近点 D(b) + α-t 内部间距 r_αt (从束缚态
-    波函数抽样), 库仑后加速增益 C₁/(D+r_αt) 随 r_αt 涨落 → E_α 展宽。
+_tth_capture_radius = None
 
-    Parameters
-    ----------
-    r_alphat : 数组或标量, α-t 相对距离 (fm); None 等价于 0 (近点处破裂)
 
-    Returns
-    -------
-    (theta_out, e_out, e_breakup) :
-      theta_out : 渐近出射角 (rad, [0, π])
-      e_out : 无穷远 α 动能 (MeV)
-      e_breakup : 破裂点 α 动能 (MeV, 库仑增益前)
+def _ensure_tth_capture_radius() -> float:
+    """t+Th 俘获半径 R_cap (懒加载缓存)
+
+    取 t+Th 入射道总势 (库仑 + Akyüz-Winther 核势) 的势垒位置: t 到达
+    势垒顶即被 ²³²Th 强吸收 (强吸收近似, 文献标准处理)。≈ 12.1 fm。
     """
-    d, phi_p = _near_point_geometry(e_cm, b)
-    v_inf = np.sqrt(2.0 * e_cm / config.system.mu_proj_targ)
-    # 近点切向速度 v_near = b·v_∞/D (角动量守恒), 方向恒为 +y
-    v_near = b * v_inf / max(d, 1e-9)
-    m_t = config.system.cluster.mass_MeV
-    m_alpha = config.system.spectator.mass_MeV
+    global _tth_capture_radius
+    if _tth_capture_radius is not None:
+        return _tth_capture_radius
+    from .potentials import total_potential, find_barrier, akyuz_winther_potential
+    r_grid = np.linspace(0.5, 30.0, 2000)
+    v0_t, r0_t, a_t = akyuz_winther_potential(
+        config.system.cluster.A, config.system.targ.Z, config.system.targ.A, config.system.cluster.Z)
+    v = total_potential(r_grid, 1.0,
+                        config.system.cluster.Z, config.system.cluster.A,
+                        config.system.targ.Z, config.system.targ.A,
+                        v0_t, r0_t, a_t)
+    rb, vb, _ = find_barrier(r_grid, v)
+    _tth_capture_radius = rb
+    return rb
 
-    v_t = config.HBARC * np.asarray(k_mag, float) / m_t
-    # α 初始速度: 近点切向(+y) + 费米(与 t 反向, 各向同性)
-    v_ax = -(m_t / m_alpha) * v_t * np.cos(np.asarray(k_theta, float))
-    v_aperp = v_near + (m_t / m_alpha) * v_t * np.sin(np.asarray(k_theta, float))
 
-    e_breakup = 0.5 * m_alpha * (v_ax**2 + v_aperp**2)
-    # 破裂点距离 = D(b) + r_αt: α 的库仑势能 (后加速增益) 随 r_αt 涨落
-    r_breakup = d + (0.0 if r_alphat is None else np.asarray(r_alphat, float))
-    theta_out, e_out = coulomb_recoil(r_breakup, phi_p, v_ax, v_aperp,
-                                      config.system.spectator.Z, config.system.product.Z, m_alpha)
-    return theta_out, e_out, e_breakup
+def _orbit_geometry(e_cm: float, b: float) -> Dict:
+    """库仑轨道参数 (入射道 7Li+Th)"""
+    mu = config.system.mu_proj_targ
+    eta = config.sommerfeld(config.system.proj.Z, config.system.targ.Z, mu, e_cm)
+    k = config.wavenumber(mu, e_cm)
+    a = eta / k                       # 半长轴 (η/k)
+    v_inf = np.sqrt(2.0 * e_cm / mu)  # 无穷远相对速度
+    L = mu * b * v_inf                # 轨道角动量 (ħ 单位×c)
+    e = np.sqrt(1.0 + (b / a) ** 2)   # 离心率
+    p = b * b / a                     # 半正焦弦
+    d = a * (1.0 + e)                 # 近点距离
+    return {'a': a, 'e': e, 'p': p, 'L': L, 'v_inf': v_inf, 'd': d}
+
+
+def _potential_at(r: np.ndarray) -> np.ndarray:
+    """入射道总势 V(r) = V_Coul(均匀带电球) + V_WS (MeV)"""
+    from .potentials import coulomb_uniform_sphere, woods_saxon
+    v = coulomb_uniform_sphere(r, config.system.proj.Z, config.system.targ.Z,
+                               config.system.proj.A, config.system.targ.A)
+    v += woods_saxon(r, config.model.v0_in, config.model.r0_in, config.model.a_in,
+                     config.system.proj.A, config.system.targ.A)
+    return v
 
 
 _alpha_t_sampler = None
 
 
-def _sample_alpha_t_radius(n: int) -> np.ndarray:
-    """抽样 α-t 内部间距 r_αt (fm), 从束缚态坐标波函数 (懒加载缓存)"""
+def _sample_alpha_t_3d(n: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """抽样 α-t 内部间距 r_αt 三维矢量 (r_mag, theta, phi), 方向各向同性
+
+    theta 相对轨道径向 r̂ (从靶指向 7Li), phi 绕 r̂ 的方位角。
+    """
     global _alpha_t_sampler
     if _alpha_t_sampler is None:
         from .structure import AlphaTRadiusSampler
         _alpha_t_sampler = AlphaTRadiusSampler()
-    return _alpha_t_sampler.sample(n)
+    return _alpha_t_sampler.sample_3d(n)
 
 
 def _event_physics(model, e_cm: float, b: float, n_fermi: int) -> Dict:
     """一次费米事件抽样, 返回全部事件物理量 (全链路唯一口径)
 
+    破裂几何 (正确考虑库仑后加速):
+      - 破裂点: 轨道上 t–Th 首次到达俘获半径 R_cap 处, 7Li 质心位置
+        R* = (m_α/M)·r_αt∥ + √(R_cap² − ((m_α/M)·r_αt⊥)²)
+        (r_αt 为 α–t 三维矢量; t 相对质心位移 d_t = −(m_α/M)r⃗_αt)
+      - 作废事件: t 横向够不到 R_cap (⊥ 分量过大), 或 R* < 近点 D(b)
+        (经典不可达), 或 R* 处经典动能 < 0
+      - α 初速: 破裂点轨道瞬时速度 (径向 v_r 入射/出射支各半 + 切向 v_t)
+        + 费米速度 (α = +(m_t/M)v_rel, t = −(m_α/M)v_rel, 投影到轨道平面)
+      - α 破裂距离: r_α = |R*r̂ + (m_t/M)r⃗_αt|, 经 coulomb_recoil 传播
+
+    转移概率: P = T·f_ICF·p_geo (常数, "t 到达 R_cap 即被吸收"的强吸收近似;
+    局部 E_rel(tTh) 依赖见 R* 几何本身——t 朝 Th 使 R* 更深, 轨道动能更高)
+
     E* = E_cm + Q_total − E_α(∞) − E_Pa    (能量守恒, α 动能含库仑后加速)
     capture = E* ≥ Q_capture: t 被 ²³²Th 俘获才算转移; 不满足的事件
     (α 拿走全部能量, t 未被俘获) 从所有截面/谱中剔除。
     """
-    k_mag, k_theta, p = model.event_distribution(e_cm, b, n_fermi)
+    k_mag, k_theta, k_phi, p = model.event_distribution(e_cm, b, n_fermi)
     p = np.asarray(p, dtype=float)
     k_mag = np.asarray(k_mag, dtype=float)
     k_theta = np.asarray(k_theta, dtype=float)
+    k_phi = np.asarray(k_phi, dtype=float)
 
-    # α-t 内部间距 r_αt: 破裂点距离 = D(b) + r_αt, 库仑增益随其涨落
-    r_alphat = _sample_alpha_t_radius(n_fermi)
+    # α-t 三维矢量 (r_αt 方向相对束流 x̂)
+    r_at, r_at_th, r_at_phi = _sample_alpha_t_3d(n_fermi)
 
-    # α 旁观者: 近点切向初速 + 费米 → 库仑传播 → 渐近 (θ_α, E_α)
-    theta_alpha, e_alpha, _ = _alpha_velocity(e_cm, b, k_mag, k_theta, r_alphat)
-
-    # ²³⁵Pa 反冲动能 (Pa 静止近似)
+    mu = config.system.mu_proj_targ
     m_alpha = config.system.spectator.mass_MeV
+    m_t = config.system.cluster.mass_MeV
     m_pa = config.system.product.mass_MeV
-    v_alpha = np.sqrt(2.0 * e_alpha / m_alpha)
-    e_pa = 0.5 * m_pa * (m_alpha * v_alpha / m_pa)**2
+    m_li = m_alpha + m_t
 
-    # 能量守恒激发能 + 俘获条件
+    orb = _orbit_geometry(e_cm, b)
+    r_cap = _ensure_tth_capture_radius()
+    r_int = config.interaction_radius(config.system.proj.A, config.system.targ.A, config.model.r0)
+    d_near = orb['d']                       # 近点距离 D(b)
+
+    # ---- 破裂 gate: 近点处 t 能否够到俘获半径 ----
+    # 破裂发生在近点附近 (7Li 最接近靶处, t–Th 最近), α 旁观。
+    # 近点处 r̂ = x̂ (束流方向); t 相对质心位移 d_t = −(m_α/M)r⃗_αt
+    # gate: |D(b)·x̂ + d⃗_t| ≤ R_cap  (t 在近点处与 Th 距离 ≤ 俘获半径)
+    # 自动实现 b 截断: b 太大 → D(b) 太大 → t 够不到 → 不破裂
+    r_at_par = r_at * np.cos(r_at_th)       # r_αt∥ (沿束流 x̂)
+    r_at_perp = r_at * np.sin(r_at_th)      # r_αt⊥
+    d_t_par = -(m_alpha / m_li) * r_at_par
+    d_t_perp = (m_alpha / m_li) * r_at_perp
+    r_t_near = np.sqrt((d_near + d_t_par) ** 2 + d_t_perp ** 2)
+    valid = r_t_near <= r_cap
+
+    # ---- α 发射 (近点, 纯切向 + 费米; 无轨道径向速度) ----
+    # 近点切向速度 v_near = b·v_∞/D (角动量守恒, 转折点处径向速度=0),
+    # 方向 +y (b>0 时 7Li 绕行到束流前方); 叠加费米投影到散射平面
+    # (费米分量用 sinθ/±cosθ 平面化近似——带 cosφ 因子会把角分布
+    # 系统性拉向前向, 已由 A/B 测试确认; 平面化与实验符合)
+    v_near = b * orb['v_inf'] / max(d_near, 1e-9)
+    v_rel = config.HBARC * k_mag / config.system.mu_alpha_t       # α–t 相对速度
+    v_alpha_t = v_near + (m_t / m_li) * v_rel * np.sin(k_theta)
+    v_alpha_r = -(m_t / m_li) * v_rel * np.cos(k_theta)
+
+    # α 破裂距离: 近点 + α-t 间距 (标量, 与角分布验证一致的旧口径)
+    r_alpha = d_near + r_at
+    valid = valid & (r_alpha >= r_int)      # α 创建点必须在核外
+
+    # 速度分解到直角 (+x = 束流/近点方向; 近点切向沿 +y)
+    vx = v_alpha_r
+    vy = v_alpha_t
+
+    # ---- 库仑传播到无穷远 (无效事件用远距离占位, 增益≈0) ----
+    # 近点在束流前方 (+x), 出射方向相对 +x
+    phi_p = np.zeros(n_fermi)
+    theta_alpha, e_alpha = coulomb_recoil(
+        np.where(valid, r_alpha, 1e6), np.where(valid, phi_p, 0.0),
+        np.where(valid, vx, 0.0), np.where(valid, vy, 0.0),
+        config.system.spectator.Z, config.system.product.Z, m_alpha)
+    theta_alpha = np.where(valid, theta_alpha, 0.0)
+    e_alpha = np.where(valid, e_alpha, 0.0)
+
+    # ---- 能量守恒激发能 + 俘获条件 ----
+    e_pa = (m_alpha / m_pa) * e_alpha
     e_star = e_cm + config.system.q_total - e_alpha - e_pa
-    capture = e_star >= config.system.q_capture
+    capture = (e_star >= config.system.q_capture) & valid
 
-    return {'k_mag': k_mag, 'k_theta': k_theta, 'p': p,
-            'theta_alpha': theta_alpha, 'e_alpha': e_alpha,
-            'e_pa': e_pa, 'e_star': e_star, 'capture': capture}
+    # 事件概率: P_base (gate 已处理 b 截断, 无额外隧穿修正)
+    p_event = np.where(valid, p, 0.0)
+
+    return {'k_mag': k_mag, 'k_theta': k_theta, 'k_phi': k_phi, 'p': p_event,
+            'r_near': np.full(n_fermi, d_near), 'theta_alpha': theta_alpha,
+            'e_alpha': e_alpha, 'e_pa': e_pa, 'e_star': e_star, 'capture': capture}
 
 
 # ============================================================
@@ -400,11 +475,11 @@ def compute_alpha_double_differential(model: TransferModel,
     e_all = np.concatenate(all_e)
     w_all = np.concatenate(all_w)
 
-    # 二维网格
+    # 二维网格 (E 轴用截面加权分位, 避免低权重极端事件拉宽坐标)
     theta_edges = np.linspace(0.0, np.pi, n_theta + 1)
     theta_centers = 0.5 * (theta_edges[:-1] + theta_edges[1:])
-    e_lo = max(float(np.percentile(e_all, 0.5)), 0.0)
-    e_hi = float(np.percentile(e_all, 99.5))
+    e_lo, e_hi = _weighted_percentiles(e_all, w_all, [0.5, 99.5])
+    e_lo = max(float(e_lo), 0.0)
     if e_hi - e_lo < 1.0:
         e_hi = e_lo + 30.0
     e_edges = np.linspace(e_lo, e_hi, n_e_alpha + 1)
@@ -585,8 +660,8 @@ def compute_alpha_energy_distribution(model: TransferModel,
     e_alpha_all = np.concatenate(all_e_alpha)
     w_all = np.concatenate(all_w)
 
-    # 自适应 bin 上界: 覆盖全部采样到的 E_α (不丢高能尾)
-    e_alpha_max = float(e_alpha_all.max())
+    # 自适应 bin 上界: 截面加权 99.5% 分位 (极端低权重事件不拉宽坐标)
+    e_alpha_max = float(_weighted_percentiles(e_alpha_all, w_all, [99.5])[0])
     if e_alpha_max < 1.0:
         e_alpha_max = 40.0
     e_alpha_edges = np.linspace(0.0, e_alpha_max, n_e_alpha_bins + 1)
